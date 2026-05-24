@@ -219,8 +219,27 @@
 }
 
 .panel.leaderboard {
-  overflow: hidden;
+  padding: 0;
   color: inherit;
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.leaderboardBody {
+  overflow-y: auto;
+  min-height: 80px;
+}
+
+.leaderboardBody::-webkit-scrollbar {
+  width: 8px;
+}
+
+.leaderboardBody::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
 }
 
 .field {

@@ -9,7 +9,7 @@ const redisClient = redis.createClient({ url: 'redis://127.0.0.1:6379' });
 
 // Requires compiled bot_fleet in the core folder
 // Generates CSV files in the run_env folder
-const CORE_DIR = './core';
+const CORE_DIR = '../core';
 const WORK_DIR = './run_env'; 
 
 async function processJob(job) {
@@ -79,10 +79,16 @@ function runLoadTest(engineExe) {
         const absoluteExePath = path.resolve(engineExe);
         const engineProcess = spawn(absoluteExePath, [], { cwd: WORK_DIR });
 
-        // Print standard output from C++
+        // Print standard output from C++ and look for the "Awaiting Bot Fleet" message to know when to start the bots
         engineProcess.stdout.on('data', (data) => {
             const output = data.toString();
             console.log(`[C++] ${output.trim()}`); 
+            if (output.includes("Awaiting Bot Fleet")) {
+                console.log(`[Worker] Engine ready. Firing Bot Fleet...`);
+                exec(path.resolve(`${CORE_DIR}/bot_fleet`), (err) => {
+                    if (err) console.error("[Worker] Bot fleet error:", err);
+                });
+            }
         });
 
         // Print error output from C++

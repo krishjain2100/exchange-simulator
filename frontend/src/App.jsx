@@ -110,17 +110,19 @@ export default function App() {
             </div>
 
             {/* Table Body */}
-            {leaderboard.length === 0 ? (
-              <div className="emptyMessage">No submissions yet. Be the first!</div>
-            ) : (
-              leaderboard.map((entry) => (
-                <div key={entry.team} className="row">
-                  <div className="rank">#{entry.rank}</div>
-                  <div className="teamCol">{entry.team}</div>
-                  <div className="latencyCol">{entry.latency_ns} ns</div>
-                </div>
-              ))
-            )}
+            <div className="leaderboardBody">
+              {leaderboard.length === 0 ? (
+                <div className="emptyMessage">No submissions yet. Be the first!</div>
+              ) : (
+                leaderboard.map((entry) => (
+                  <div key={entry.team} className="row">
+                    <div className="rank">#{entry.rank}</div>
+                    <div className="teamCol">{entry.team}</div>
+                    <div className="latencyCol">{entry.latency_ns} ns</div>
+                  </div>
+                ))
+              )}
+            </div>
 
           </div>
         </div>
