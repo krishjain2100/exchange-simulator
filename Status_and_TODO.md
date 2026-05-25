@@ -77,13 +77,10 @@ Behavior:
 - Golden model replays inputs and diffs trades/book state.
 
 
-
 ## 4) Todo
 
 ## Stabilize Core Pipeline
 
-- [ ] Convert worker path handling to absolute paths (`path.join(__dirname, '..', 'core')`, etc.).
-- [ ] Add robust compile command escaping/argument handling (prefer `spawn` with args over shell string where possible).
 - [ ] Add API validation for missing file/team name and return clear 4xx responses.
 - [ ] Add Multer file size/type limits and reject non-`.cpp` uploads.
 - [ ] Preserve best latency per team (update only if new score is lower).
@@ -93,32 +90,22 @@ Behavior:
 - [ ] Introduce processing queue semantics with retries + dead-letter queue.
   - Option A: list + processing list (`BRPOPLPUSH`) + retry count.
   - Option B: Redis Streams with consumer groups.
-- [ ] Persist job status (`queued`, `compiling`, `running`, `failed`, `passed`) for frontend visibility.
 - [ ] Add graceful shutdown for worker and API.
 - [ ] Add health endpoints (`/healthz`) and readiness checks.
 
 ## Scale
-
 - [ ] Add rate limiting and request throttling.
-- [ ] Isolate untrusted code execution (containers/sandbox, resource limits, timeouts).
-- [ ] Support parallel job execution safely (containerized workers, per-job network isolation).
 
 ## Bot Fleet
 - [ ] Do proper simulation of market traffic
 
 ## Wrapper
-- [ ] Add p1, p50, p99.
+- [ ] Add TPS, don't know how to calculate
 
 ## UX and Developer Experience
 
-- [ ] Show submission/job history and failure reason in frontend.
 - [ ] Replace polling with SSE/WebSocket for live updates
-- [ ] Add automated tests:
-  - backend endpoint tests
-  - worker integration tests
-  - golden model regression fixtures
 - [ ] Add complete runbook docs and architecture diagram in README.
-
 
 
 ## 5) Commands

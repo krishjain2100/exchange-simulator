@@ -54,6 +54,127 @@
   border-radius: 4px;
 }
 
+/* Table styles for leaderboard */
+.leaderboardTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.leaderboardTable thead {
+  background: #1f1f1f;
+}
+
+.leaderboardTable th,
+.leaderboardTable td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #2b2b2b;
+  color: #dfe6e9;
+}
+
+.leaderboardTable th {
+  text-align: left;
+  font-weight: 700;
+  color: #fff;
+}
+
+.tableRow:hover {
+  background: #121212;
+}
+
+.numeric {
+  text-align: right;
+  font-family: monospace;
+}
+
+.rank {
+  width: 64px;
+  color: #fff;
+}
+
+.team {
+  font-weight: 700;
+}
+
+.emptyMessage {
+  padding: 20px;
+  color: #888;
+  text-align: center;
+}
+
+.jobsList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 8px;
+}
+
+.jobsWrapper {
+  margin-top: 16px;
+}
+
+.jobRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: #0b0b0b;
+  border: 1px solid #222;
+  border-radius: 6px;
+}
+
+.jobMeta {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  align-items: center
+}
+
+.jobId {
+  color: #cbd5e0;
+  font-weight: 700
+}
+
+.jobTeam {
+  color: #9aa4a8
+}
+
+.jobStatus {
+  width: 100px;
+  text-transform: capitalize;
+  font-weight: 700
+}
+
+.jobTimes {
+  width: 160px;
+  text-align: right;
+  color: #888
+}
+
+.jobError {
+  color: #ff6b6b;
+  font-family: monospace;
+  margin-left: 8px
+}
+
+.status-passed {
+  border-left: 4px solid #22c55e
+}
+
+.status-failed {
+  border-left: 4px solid #ef4444
+}
+
+.status-compiling {
+  border-left: 4px solid #f59e0b
+}
+
+.status-queued {
+  border-left: 4px solid #64748b
+}
+
 .field {
   margin-bottom: 20px;
 }
@@ -97,38 +218,4 @@
   color: #aaa;
 }
 
-.headerRow {
-  display: flex;
-  background: #222;
-  padding: 12px 20px;
-  border-bottom: 1px solid #444;
-  font-weight: bold;
-  color: #fff;
-}
-
-.row {
-  display: flex;
-  padding: 12px 20px;
-  border-bottom: 1px solid #333;
-  color: #0f0;
-}
-
-.rank {
-  width: 60px;
-  color: #fff;
-}
-
-.teamCol {
-  flex: 1;
-}
-
-.latencyCol {
-  width: 100px;
-  text-align: right;
-}
-
-.emptyMessage {
-  padding: 20px;
-  color: #888;
-  text-align: center;
-}
+/* removed unused scaffold-era flex row styles in favor of table layout */

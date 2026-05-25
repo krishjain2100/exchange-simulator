@@ -26,8 +26,13 @@ const redisClient = redis.createClient({
 });
 
 async function startServer() {
-    await redisClient.connect();
-    console.log('Redis Connected');
+    try {
+        await redisClient.connect();
+        console.log('Redis Connected');
+    } catch (err) {
+        console.error('Redis Connection Error:', err);
+        process.exit(1);
+    }
 
     // 3. Submit Endpoint: Receives the uploaded file and team name, saves the file, and pushes a job ticket to Redis
     app.post('/api/submit', upload.single('code_file'), async (req, res) => {
@@ -48,6 +53,15 @@ async function startServer() {
 
             // 5. Push the ticket onto the Redis Queue
             await redisClient.lPush('hackathon:queue', jobPayload);
+            const jobKey = `job:${jobId}`;
+            await redisClient.hSet(jobKey, {
+                job_id: jobId,
+                team: teamName,
+                status: 'queued',
+                created_at: Date.now().toString()
+            });
+            await redisClient.lPush('hackathon:jobs', jobId);
+            await redisClient.lTrim('hackathon:jobs', 0, 199);
             console.log(`[Redis] Job ${jobId} pushed to queue.`);
 
             // 6. Respond to the client
@@ -62,17 +76,53 @@ async function startServer() {
     // 7. Leaderboard Endpoint: Retrieves the sorted leaderboard from Redis and sends it to the frontend
     app.get('/api/leaderboard', async (req, res) => {
         try {
-            const results = await redisClient.zRangeWithScores('leaderboard', 0, -1);
-            const leaderboard = results.map((entry, index) => ({
-                rank: index + 1,
-                team: entry.value,
-                latency_ns: entry.score
+            // 1. Get the top teams ranked by their composite score (lowest to highest)
+            const rankedTeams = await redisClient.zRangeWithScores('leaderboard', 0, -1);
+            
+            // 2. Fetch the detailed metrics (p50, p90, p99) for each team
+            const fullLeaderboard = await Promise.all(rankedTeams.map(async (entry) => {
+                const teamName = entry.value;
+                const compositeScore = entry.score;
+
+                const metrics = await redisClient.hGetAll(`team_metrics:${teamName}`);
+                
+                return {
+                    team: teamName,
+                    composite: compositeScore,
+                    p50: parseInt(metrics.p50 || 0, 10),
+                    p90: parseInt(metrics.p90 || 0, 10),
+                    p99: parseInt(metrics.p99 || 0, 10)
+                };
             }));
 
-            res.status(200).json({ success: true, leaderboard });
-        } catch (error) {
-            console.error(error);
-            res.status(500).json({ success: false });
+            res.json(fullLeaderboard);
+        } catch (err) {
+            console.error("Leaderboard fetch error:", err);
+            res.status(500).json({ error: "Failed to fetch leaderboard" });
+        }
+    });
+
+
+    app.get('/api/jobs', async (req, res) => {
+        try {
+            const ids = await redisClient.lRange('hackathon:jobs', 0, 99);
+            const jobs = await Promise.all(ids.map(async (id) => {
+                const data = await redisClient.hGetAll(`job:${id}`);
+                return {
+                    job_id: data.job_id || id,
+                    team: data.team || 'unknown',
+                    status: data.status || 'unknown',
+                    created_at: data.created_at ? parseInt(data.created_at, 10) : null,
+                    started_at: data.started_at ? parseInt(data.started_at, 10) : null,
+                    finished_at: data.finished_at ? parseInt(data.finished_at, 10) : null,
+                    error: data.error || null
+                };
+            }));
+
+            res.json(jobs);
+        } catch (err) {
+            console.error('Failed to fetch jobs:', err);
+            res.status(500).json({ error: 'Failed to fetch jobs' });
         }
     });
 
