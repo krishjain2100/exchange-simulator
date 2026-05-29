@@ -10,11 +10,7 @@ function Leaderboard() {
       try {
         const response = await fetch('/api/leaderboard');
         const data = await response.json();
-
-        // Ensure data is an array before setting it
-        if (Array.isArray(data)) {
-          setLeaderboard(data);
-        }
+        setLeaderboard(data);
       } catch (error) {
         console.error("Failed to fetch leaderboard", error);
       }
@@ -74,7 +70,7 @@ function Jobs() {
       try {
         const res = await fetch('/api/jobs');
         const data = await res.json();
-        if (Array.isArray(data)) setJobs(data);
+        setJobs(data);
       } catch (err) {
         console.error('Failed to fetch jobs', err);
       }

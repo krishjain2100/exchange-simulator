@@ -1,6 +1,6 @@
 # Exchange Simulator - Project Status, Design, and Roadmap
 
-Last updated: 2026-05-25
+Last updated: 2026-05-29
 
 ## 1) What Exists Today
 
@@ -14,15 +14,22 @@ This repository currently implements a working single-node prototype of a hackat
 
 ## 2) Current End-to-End Flow
 
-1. User uploads `.cpp` file from UI (`/api/submit`).
-2. API stores file with Multer under `backend/uploads/` and pushes a JSON job to Redis list `hackathon:queue`.
-3. Worker blocks on `BRPOP` and processes one job at a time:
-   - compile: `Wrapper.cpp + uploaded file` into `run_env/job_<id>_engine`
-   - run engine executable
-   - when output includes "Awaiting Bot Fleet", launch `core/bot_fleet`
-   - run `core/golden_model.py` against generated CSV artifacts
-   - if success, read `latency.txt` and `ZADD` score into `leaderboard`
-4. Frontend polls `/api/leaderboard` every 3 seconds and renders rank/team/latency.
+1. User uploads a `.cpp` file from the UI (`/api/submit`).
+2. API stores the uploaded file with Multer under `backend/uploads/` and pushes a JSON job to the Redis list `hackathon:queue`.
+3. A worker process blocks on `BRPOP` and processes jobs sequentially:
+  - the worker moves the uploaded file into a per-job sandbox (`run_env/<job_id>`) and sets job status `compiling` in Redis.
+  - the worker runs a Docker sandbox (`hft-sandbox`) to compile and exercise the submission inside an isolated container. As soon as the Docker container starts the worker marks the job `running` in Redis and records `started_at`.
+  - the worker executes the compiled engine binary (the wrapper) and waits for the engine to print the readiness marker ("Awaiting Bot Fleet"). When that appears the worker launches `core/bot_fleet` to drive the load against the engine.
+  - after the bots complete, the worker runs the local `core/verifier` binary on the host to verify correctness of generated CSV artifacts.
+  - if verification passes, the worker reads `latency.txt` produced by the sandbox, computes the composite score, `ZADD`s the score into the `leaderboard`, and writes `duration_ms` and per-team metrics into Redis.
+  - the worker now avoids overwriting an existing terminal job `status`/`error` in Redis; `duration_ms` is always persisted.
+4. Frontend polls `/api/leaderboard` (every 3s) and renders rank/team/latency.
+
+Notes:
+- Redis is expected at `127.0.0.1:6379` by default.
+- Docker must be available on the host to run the `hft-sandbox` container used for compilation and load testing.
+- The `core/verifier` binary runs on the host (not inside the container) and must be present and executable.
+- `core/bot_fleet` now tracks and reports a thread-safe network orders counter at shutdown to aid debugging.
 
 ## 3) Component Design Summary
 
@@ -53,11 +60,13 @@ Files:
 - `backend/worker.js`
 
 Behavior:
-- Sequential processing loop (`while true` + `await processJob`).
-- Compiles user code with `g++` and wrapper.
-- Executes engine, triggers bot fleet, runs correctness/latency validation.
-- Writes leaderboard score to Redis.
-- Cleans uploaded source and compiled executable in `finally`.
+- Sequential processing loop (`while true` + `await processJob`) that consumes jobs from Redis `hackathon:queue`.
+- Moves uploads into a per-job sandbox (`run_env/<job_id>`), sets `compiling` in Redis, then runs the `hft-sandbox` Docker container to compile and exercise the submission.
+- Marks the job `running` in Redis as soon as the Docker container starts and records `started_at`.
+- Runs the compiled engine (wrapper) and waits for the wrapper's readiness marker ("Awaiting Bot Fleet"); launches `core/bot_fleet` to drive load against the engine when ready.
+- Runs the host `core/verifier` binary to validate generated CSV artifacts.
+- On success reads `latency.txt`, computes a composite score, `ZADD`s into `leaderboard`, and writes `duration_ms` plus per-team metrics into Redis.
+- Cleans uploaded source and compiled executable in `finally` and logs job duration/metrics.
 
 ### Core Engine and Validator
 
@@ -73,11 +82,17 @@ Files:
 Behavior:
 - Limit/market/cancel processing for buy/sell books.
 - Trade reporting through `Telemetry::ReportTrade`.
-- Wrapper handles TCP ingestion, dispatching, ledger/trade/book CSV dump, and avg latency output.
-- Golden model replays inputs and diffs trades/book state.
+- `core/Wrapper.cpp` handles compilation wrapper behavior, TCP ingestion for orders, readiness marker emission ("Awaiting Bot Fleet"), and CSV dumps used by the verifier.
+- `core/bot_fleet.cpp` simulates multiple bots, sends orders/cancels to the engine, and now tracks a thread-safe network orders counter reported at shutdown to help debug load behavior.
+- `core/verifier` replay inputs and diff trades/book state to validate correctness.
 
 
 ## 4) Todo
+
+
+## Verification
+
+- [ ] Verify latencies for different engines and verify cpu pining
 
 ## Stabilize Core Pipeline
 
@@ -95,9 +110,7 @@ Behavior:
 
 ## Scale
 - [ ] Add rate limiting and request throttling.
-
-## Bot Fleet
-- [ ] Do proper simulation of market traffic
+- [ ] Verifier's binary is being used, so sometimes I forget to compile
 
 ## Wrapper
 - [ ] Add TPS, don't know how to calculate
@@ -106,7 +119,6 @@ Behavior:
 
 - [ ] Replace polling with SSE/WebSocket for live updates
 - [ ] Add complete runbook docs and architecture diagram in README.
-
 
 ## 5) Commands
 

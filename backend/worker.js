@@ -6,10 +6,13 @@ const path = require('path');
 
 const CORE_DIR = path.resolve('../core');
 const WORK_DIR = path.resolve('../run_env');
+const createLogger = require('./logger');
+const log = createLogger('Worker');
 
 async function processJob(job, workerId, workerClient) {
-    console.log(`\n========================================`);
-    console.log(`[Worker ${workerId}] Starting Job: ${job.job_id} for Team: ${job.team}`);
+    const jobStartedAt = Date.now();
+    log.info(`\n========================================`);
+    log.info(`[Worker ${workerId}] Starting Job: ${job.job_id} for Team: ${job.team}`);
 
     // 1. Setup the Isolated Directory for this specific job
     const jobDir = path.join(WORK_DIR, job.job_id);
@@ -19,53 +22,65 @@ async function processJob(job, workerId, workerClient) {
     const sandboxCodePath = path.join(jobDir, 'submission.cpp');
     fs.renameSync(job.filepath, sandboxCodePath);
 
-    // Update job status: compiling -> running etc.
+    // Update job status: queued → compiling
     try {
         await workerClient.hSet(`job:${job.job_id}`, {
             status: 'compiling',
             started_at: Date.now().toString()
         });
     } catch (e) {
-        console.warn(`[Worker ${workerId}] Could not update job status: ${e.message}`);
+        log.warn(`[Worker ${workerId}] Could not update job status: ${e.message}`);
     }
 
     // track whether this job completed successfully
     let succeeded = false;
 
     try {
-        console.log(`[Worker ${workerId}] Spinning up Docker Sandbox...`);
+        log.info(`[Worker ${workerId}] Spinning up Docker Sandbox...`);
 
         // 2. Run the Docker Container with the uploaded code
         // --rm: Delete container when finished
         // --network none: No internet access
         // -v: Mount the specific job directory to /sandbox
         // --memory="512m": Prevents them from using too much of host's RAM
-        // timeout 10: Kills the container if it runs longer than 10 seconds
+        // timeoutMs = 120000 (120s): kills the container if it runs longer than the timeout
         try {
             await new Promise((resolve, reject) => {
                 const dockerArgs = ['run', '--rm', '--network', 'none', '-v', `${jobDir}:/sandbox`, 'hft-sandbox'];
-                const timeoutMs = 10000;
+                const timeoutMs = 120000;
                 const dockerProcess = spawn('docker', dockerArgs, { timeout: timeoutMs, killSignal: 'SIGKILL' });
 
                 dockerProcess.stdout.on('data', (data) => process.stdout.write(data.toString()));
-                dockerProcess.stderr.on('data', (data) => process.stderr.write(`[Docker ERROR] ${data.toString()}`));
+                dockerProcess.stderr.on('data', (data) => log.error(`[Docker ERROR] ${data.toString()}`));
+
+                (async () => {
+                    try {
+                        console.log(`[Worker ${workerId}] Updating job status to running in Redis...`);
+                        await workerClient.hSet(`job:${job.job_id}`, {
+                            status: 'running',
+                            started_at: Date.now().toString()
+                        });
+                    } catch (e) {
+                        log.warn(`[Worker ${workerId}] Could not update job status to running: ${e.message}`);
+                    }
+                })();
 
                 dockerProcess.on('error', (err) => reject(err));
 
                 dockerProcess.on('close', (code, signal) => {
-                    if (code === 0) return resolve();
-                    if (code === null) return reject(new Error(`Docker terminated by signal ${signal}`));
-                    return reject(new Error(`Docker exited with code ${code}`));
+                    if (code === 0) {
+                        return resolve();
+                    } else if (signal === 'SIGKILL') {
+                        return reject(new Error(`Docker process killed after exceeding time limit of ${timeoutMs / 1000} seconds`));
+                    } else if (code !== null) {
+                        return reject(new Error(`Docker exited with code ${code}`));
+                    } else {
+                        return reject(new Error(`Docker terminated by signal ${signal}`));
+                    }
                 });
             });
 
-            try {
-                await workerClient.hSet(`job:${job.job_id}`, { status: 'running' });
-            } catch (e) {
-                console.warn(`[Worker ${workerId}] Could not update job status to running: ${e.message}`);
-            }
         } catch (dockerError) {
-            console.error(`[Worker] Aborting run:`, dockerError.message);
             try {
                 await workerClient.hSet(`job:${job.job_id}`, {
                     status: 'failed',
@@ -73,36 +88,36 @@ async function processJob(job, workerId, workerClient) {
                     error: `docker:${dockerError.message}`
                 });
             } catch (e) {
-                console.warn(`[Worker ${workerId}] Could not update job status after Docker failure: ${e.message}`);
+                log.warn(`[Worker ${workerId}] Could not update job status after Docker failure: ${e.message}`);
             }
             return;
         }
 
-        // 3. Run the Golden Model (On the Mac Host)
-        console.log(`[Worker ${workerId}] Verifying Correctness...`);
+        // 3. Run the Verifier (On the Mac Host)
+        log.info(`[Worker ${workerId}] Verifying Correctness...`);
 
         try {
             await new Promise((resolve, reject) => {
-                const pyProcess = spawn('python3', [`${CORE_DIR}/golden_model.py`, jobDir]);
+                const verifyProcess = spawn(`${CORE_DIR}/verifier`, [jobDir]);
 
-                pyProcess.stdout.on('data', (data) => process.stdout.write(data.toString()));
-                pyProcess.stderr.on('data', (data) => process.stderr.write(`[Python ERROR] ${data.toString()}`));
+                verifyProcess.stdout.on('data', (data) => process.stdout.write(data.toString()));
+                verifyProcess.stderr.on('data', (data) => log.error(`[Verifier ERROR] ${data.toString()}`));
 
-                pyProcess.on('close', (code) => {
+                verifyProcess.on('close', (code) => {
                     if (code === 0) {
                         resolve();
                     } else {
-                        reject(new Error(`Verification failed (Exit Code ${code})`));
+                        reject(new Error(`Verification failed with exit code: ${code}`));
                     }
                 });
             });
 
-            console.log(`[Worker ${workerId}] Correctness Passed!`);
+            log.info(`[Worker ${workerId}] Correctness Passed!`);
 
             // 4. Score the submission by reading the latency.txt file generated by the Docker container
             const latencyFilePath = path.join(jobDir, 'latency.txt');
             if (!fs.existsSync(latencyFilePath)) {
-                console.error(`[Worker ERROR] latency.txt was not generated!`);
+                log.error(`[Worker ${workerId}] latency.txt was not generated!`);
                 try {
                     await workerClient.hSet(`job:${job.job_id}`, {
                         status: 'failed',
@@ -110,7 +125,7 @@ async function processJob(job, workerId, workerClient) {
                         error: 'missing_latency'
                     });
                 } catch (e) {
-                    console.warn(`[Worker ${workerId}] Could not update job status after missing latency: ${e.message}`);
+                    log.warn(`[Worker ${workerId}] Could not update job status after missing latency: ${e.message}`);
                 }
                 return;
             }
@@ -118,7 +133,7 @@ async function processJob(job, workerId, workerClient) {
             const latencyStr = fs.readFileSync(latencyFilePath, 'utf8');
             const parts = latencyStr.split(',').map(v => parseInt(v.trim(), 10));
             if (parts.length < 3 || parts.some(v => Number.isNaN(v))) {
-                console.error('[Worker ERROR] Invalid latency.txt contents:', latencyStr);
+                log.error(`[Worker ${workerId}] Invalid latency.txt contents:`, latencyStr);
                 try {
                     await workerClient.hSet(`job:${job.job_id}`, {
                         status: 'failed',
@@ -126,27 +141,30 @@ async function processJob(job, workerId, workerClient) {
                         error: 'invalid_latency'
                     });
                 } catch (e) {
-                    console.warn(`[Worker ${workerId}] Could not update job status after invalid latency: ${e.message}`);
+                    log.warn(`[Worker ${workerId}] Could not update job status after invalid latency: ${e.message}`);
                 }
                 return;
             }
 
             const [p50, p90, p99] = parts;
-            const compositeScore = Math.floor((p50 * 0.2) + (p90 * 0.3) + (p99 * 0.5));
+            const compositeScore = Math.floor((p50 * 0.5) + (p90 * 0.3) + (p99 * 0.2));
 
             console.log(`[Worker ${workerId}] p50: ${p50}ns, p90: ${p90}ns, p99: ${p99}ns`);
             console.log(`[Worker ${workerId}] Official Composite Score: ${compositeScore}`);
 
             // Add to Redis (Redis ZSets rank from lowest to highest by default)
-            await workerClient.zAdd('leaderboard', { score: compositeScore, value: job.team });
-
-            await workerClient.hSet(`team_metrics:${job.team}`, {
-                p50: p50.toString(),
-                p90: p90.toString(),
-                p99: p99.toString(),
-                score: compositeScore.toString()
-            });
-
+            try {
+                await workerClient.zAdd('leaderboard', { score: compositeScore, value: job.team });
+                await workerClient.hSet(`team_metrics:${job.team}`, {
+                    p50: p50.toString(),
+                    p90: p90.toString(),
+                    p99: p99.toString(),
+                    score: compositeScore.toString()
+                });
+            } catch (err) {
+                console.error(`[Worker ${workerId}] Failed to update leaderboard in Redis:`, err);
+                return;
+            }
 
             succeeded = true;
             try {
@@ -158,13 +176,13 @@ async function processJob(job, workerId, workerClient) {
                 console.warn(`[Worker ${workerId}] Could not update job status to passed: ${e.message}`);
             }
 
-        } catch (pyError) {
-            console.log(`[Worker ${workerId}] Correctness FAILED: ${pyError.message}`);
+        } catch (err) {
+            console.log(`[Worker ${workerId}] Correctness FAILED: ${err.message}`);
             try {
                 await workerClient.hSet(`job:${job.job_id}`, {
                     status: 'failed',
                     finished_at: Date.now().toString(),
-                    error: `golden:${pyError.message}`
+                    error: `verifier:${err.message}`
                 });
             } catch (e) {
                 console.warn(`[Worker ${workerId}] Could not update job status to failed: ${e.message}`);
@@ -184,22 +202,29 @@ async function processJob(job, workerId, workerClient) {
             console.warn(`[Worker ${workerId}] Could not update job status to failed: ${e.message}`);
         }
     } finally {
+        const durationMs = Date.now() - jobStartedAt;
+
+        log.info(`[Worker ${workerId}] Finished job ${job.job_id} in ${durationMs}ms`);
+
         if (!succeeded) {
             try {
-                const current = await workerClient.hGetAll(`job:${job.job_id}`);
-                if (!current.status || current.status === 'compiling' || current.status === 'running') {
+                const existingStatus = await workerClient.hGet(`job:${job.job_id}`, 'status');
+                const existingError = await workerClient.hGet(`job:${job.job_id}`, 'error');
+
+                // If the job already has a terminal status, don't overwrite it.
+                if (existingStatus !== 'passed' && existingStatus !== 'failed') {
                     await workerClient.hSet(`job:${job.job_id}`, {
                         status: 'failed',
                         finished_at: Date.now().toString(),
-                        error: current.error || 'unknown_failure'
+                        error: existingError || 'unknown_failure'
                     });
+                } else {
+                    log.info(`[Worker ${workerId}] Job ${job.job_id} already has terminal status: ${existingStatus}`);
                 }
             } catch (e) {
                 console.warn(`[Worker ${workerId}] Could not update job status to failed: ${e.message}`);
             }
         }
-
-        // Optional Cleanup
         // if (fs.existsSync(jobDir)) fs.rmSync(jobDir, { recursive: true, force: true });
     }
 }
@@ -222,7 +247,6 @@ async function startWorker(workerId) {
             const result = await workerClient.brPop('hackathon:queue', 0);
             const job = JSON.parse(result.element);
 
-            // Await ensures we finish grading one submission before starting the next
             await processJob(job, workerId, workerClient);
         } catch (err) {
             console.error(`[Worker ${workerId}] Redis pulling error:`, err);

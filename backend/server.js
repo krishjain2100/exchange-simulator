@@ -5,9 +5,11 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
+const createLogger = require('./logger');
+const log = createLogger('API');
 
 app.use((req, res, next) => {
-    console.log(`[Express Network] Incoming ${req.method} request to ${req.url}`);
+    log.info(`Incoming ${req.method} request to ${req.url}`);
     next();
 });
 
@@ -15,22 +17,39 @@ app.use((req, res, next) => {
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR);
-    // Note: In production, you would want to handle file storage more robustly (e.g., S3, GCS) and clean up old files regularly
+    // Note: In production, you would want to handle file storage more robustly (e.g., S3, GCS)
+    //  and clean up old files regularly
 }
 
 const upload = multer({ dest: UPLOADS_DIR });
 
 // 2. Setup Redis client
 const redisClient = redis.createClient({
-    url: 'redis://127.0.0.1:6379' 
+    url: 'redis://127.0.0.1:6379'
 });
+
+async function connectRedisWithRetry(maxRetries = 3, delayMs = 3000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            await redisClient.connect();
+            console.log('Redis Connected');
+            return;
+        } catch (err) {
+            console.error(`Redis connection attempt ${attempt} failed:`, err.message || err);
+            if (attempt < maxRetries) {
+                await new Promise((r) => setTimeout(r, delayMs));
+            } else {
+                throw err;
+            }
+        }
+    }
+}
 
 async function startServer() {
     try {
-        await redisClient.connect();
-        console.log('Redis Connected');
+        await connectRedisWithRetry(3, 5000);
     } catch (err) {
-        console.error('Redis Connection Error:', err);
+        console.error('Redis Connection Error after retries:', err);
         process.exit(1);
     }
 
@@ -41,7 +60,7 @@ async function startServer() {
             const filePath = req.file.path; // Multer handled the disk save automatically
             const jobId = "job_" + Date.now();
 
-            console.log(`[API] Received file from ${teamName}. Saved locally at ${filePath}`);
+            log.info(`[API] Received file from ${teamName}. Saved locally at ${filePath}`);
 
             // 4. Create the JSON ticket for the worker
             const jobPayload = JSON.stringify({
@@ -52,19 +71,36 @@ async function startServer() {
             });
 
             // 5. Push the ticket onto the Redis Queue
-            await redisClient.lPush('hackathon:queue', jobPayload);
-            const jobKey = `job:${jobId}`;
-            await redisClient.hSet(jobKey, {
-                job_id: jobId,
-                team: teamName,
-                status: 'queued',
-                created_at: Date.now().toString()
-            });
-            await redisClient.lPush('hackathon:jobs', jobId);
-            await redisClient.lTrim('hackathon:jobs', 0, 199);
-            console.log(`[Redis] Job ${jobId} pushed to queue.`);
+            try {
+                await redisClient.lPush('hackathon:queue', jobPayload);
+            }
+            catch (err) {
+                console.error('Failed to push job to Redis queue:', err);
+                return res.status(500).json({ success: false, message: "Failed to queue the job" });
+            }
 
-            // 6. Respond to the client
+            const jobKey = `job:${jobId}`;
+
+            try {
+                await redisClient.hSet(jobKey, {
+                    job_id: jobId,
+                    team: teamName,
+                    status: 'queued',
+                    created_at: Date.now().toString()
+                });
+            } catch (err) {
+                console.error('Failed to set job hash in Redis:', err);
+                return res.status(500).json({ success: false, message: "Failed to initialize job status" });
+            }
+            try {
+                await redisClient.lPush('hackathon:jobs', jobId);
+                await redisClient.lTrim('hackathon:jobs', 0, 199); // Refine later
+                log.info(`[Redis] Job ${jobId} pushed to queue.`);
+            } catch (err) {
+                console.error('Failed to push job to Redis jobs list:', err);
+                return res.status(500).json({ success: false, message: "Failed to initialize job status" });
+            }
+
             res.status(200).json({ success: true, job_id: jobId, message: "File saved and queued!" });
 
         } catch (error) {
@@ -73,19 +109,19 @@ async function startServer() {
         }
     });
 
-    // 7. Leaderboard Endpoint: Retrieves the sorted leaderboard from Redis and sends it to the frontend
+    // Leaderboard Endpoint: Retrieves the sorted leaderboard from Redis and sends it to the frontend
     app.get('/api/leaderboard', async (req, res) => {
         try {
             // 1. Get the top teams ranked by their composite score (lowest to highest)
             const rankedTeams = await redisClient.zRangeWithScores('leaderboard', 0, -1);
-            
-            // 2. Fetch the detailed metrics (p50, p90, p99) for each team
+
+            // 2. Fetch the  metrics (p50, p90, p99) for each team
             const fullLeaderboard = await Promise.all(rankedTeams.map(async (entry) => {
                 const teamName = entry.value;
                 const compositeScore = entry.score;
 
                 const metrics = await redisClient.hGetAll(`team_metrics:${teamName}`);
-                
+
                 return {
                     team: teamName,
                     composite: compositeScore,
@@ -97,15 +133,15 @@ async function startServer() {
 
             res.json(fullLeaderboard);
         } catch (err) {
-            console.error("Leaderboard fetch error:", err);
+            log.error("Leaderboard fetch error:", err);
             res.status(500).json({ error: "Failed to fetch leaderboard" });
         }
-    });
+    }); // cache or something if this becomes a bottleneck
 
 
     app.get('/api/jobs', async (req, res) => {
         try {
-            const ids = await redisClient.lRange('hackathon:jobs', 0, 99);
+            const ids = await redisClient.lRange('hackathon:jobs', 0, 199);
             const jobs = await Promise.all(ids.map(async (id) => {
                 const data = await redisClient.hGetAll(`job:${id}`);
                 return {
@@ -117,11 +153,11 @@ async function startServer() {
                     finished_at: data.finished_at ? parseInt(data.finished_at, 10) : null,
                     error: data.error || null
                 };
-            }));
+            })); // refine later.
 
             res.json(jobs);
         } catch (err) {
-            console.error('Failed to fetch jobs:', err);
+            log.error('Failed to fetch jobs:', err);
             res.status(500).json({ error: 'Failed to fetch jobs' });
         }
     });
