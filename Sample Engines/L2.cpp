@@ -4,6 +4,7 @@
 #include <iostream>
 #include <list>
 #include <map>
+#include <unordered_set>
 
 class IntermediateEngine : public ExchangeEngine {
 private:
@@ -15,6 +16,7 @@ private:
 
   std::array<DescBook, INSTRUMENT_COUNT> bids;
   std::array<AscBook, INSTRUMENT_COUNT> asks;
+  std::unordered_set<uint64_t> seen_sequences;
 
   void HandleCancel(const Order &cancel_order) {
     uint16_t inst = cancel_order.instrument_id;
@@ -97,9 +99,13 @@ public:
     std::cout << "[IntermediateEngine] Booting mid-level engine (Red-Black "
                  "Trees + Lists)..."
               << std::endl;
+    seen_sequences.reserve(2000000);
   }
 
   void ProcessOrder(const Order &current) override {
+    if (!seen_sequences.insert(current.sequence_id).second)
+      return;
+
     if (current.type == OrderType::CANCEL) {
       HandleCancel(current);
       return;
@@ -187,17 +193,16 @@ public:
     }
   }
 
-  std::vector<Order> GetRestingOrders() const override {
+  std::vector<Order> GetRestingOrders(uint16_t instrument_id) const override {
     std::vector<Order> resting;
-    for (int i = 0; i < INSTRUMENT_COUNT; ++i) {
-      for (const auto &[price, level] : bids[i]) {
-        for (const auto &o : level)
-          resting.push_back(o);
-      }
-      for (const auto &[price, level] : asks[i]) {
-        for (const auto &o : level)
-          resting.push_back(o);
-      }
+    if (instrument_id >= INSTRUMENT_COUNT) return resting;
+    for (const auto &[price, level] : bids[instrument_id]) {
+      for (const auto &o : level)
+        resting.push_back(o);
+    }
+    for (const auto &[price, level] : asks[instrument_id]) {
+      for (const auto &o : level)
+        resting.push_back(o);
     }
     return resting;
   }

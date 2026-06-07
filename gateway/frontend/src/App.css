@@ -1,0 +1,405 @@
+.app {
+  padding: 24px 28px 40px;
+  text-align: left;
+}
+
+.appHeader {
+  margin-bottom: 28px;
+}
+
+.title {
+  margin: 0 0 6px;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: #f4f4f5;
+}
+
+.subtitle {
+  margin: 0;
+  color: #71717a;
+  font-size: 0.95rem;
+}
+
+.topGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) 1fr;
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 900px) {
+  .topGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: #141414;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.sectionTitle,
+.panelHeader h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fafafa;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #27272a;
+  background: #18181b;
+}
+
+.panelHint {
+  font-size: 0.75rem;
+  color: #71717a;
+}
+
+.scrollPanel {
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.deployPanel {
+  padding: 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.fieldLabel {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #a1a1aa;
+}
+
+.input {
+  width: 100%;
+  padding: 10px 12px;
+  background: #0a0a0a;
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+  color: #fafafa;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #7c3aed;
+}
+
+.fileInput {
+  padding: 8px;
+  font-size: 0.82rem;
+}
+
+.fileName {
+  font-size: 0.8rem;
+  color: #a78bfa;
+}
+
+.submitBtn {
+  width: 100%;
+  margin-top: 4px;
+  padding: 11px 16px;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.submitBtn:hover {
+  filter: brightness(1.08);
+}
+
+.statusLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #0a0a0a;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: #a1a1aa;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #52525b;
+  flex-shrink: 0;
+}
+
+.statusDot.live {
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e88;
+}
+
+.leaderboardPanel {
+  min-width: 0;
+}
+
+.leaderboardList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.leaderboardCard,
+.jobCard {
+  background: #0f0f10;
+  border: 1px solid #27272a;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.leaderboardCard {
+  border-radius: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid #22c55e;
+}
+
+.jobCard {
+  border-left: 3px solid #3f3f46;
+}
+
+.jobCard.status-passed { border-left-color: #22c55e; }
+.jobCard.status-failed { border-left-color: #ef4444; }
+.jobCard.status-compiling,
+.jobCard.status-phase1_running,
+.jobCard.status-phase2_running { border-left-color: #f59e0b; }
+.jobCard.status-queued { border-left-color: #64748b; }
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cardIdentity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cardRank {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #71717a;
+}
+
+.cardTeam {
+  font-weight: 600;
+  color: #fafafa;
+  font-size: 0.95rem;
+}
+
+.cardMeta,
+.cardScoreBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cardScore {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #4ade80;
+  font-variant-numeric: tabular-nums;
+}
+
+.jobId {
+  font-size: 0.72rem;
+  color: #71717a;
+}
+
+.jobTime,
+.jobDuration {
+  font-size: 0.72rem;
+  color: #52525b;
+}
+
+.metricStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.metricBlock {
+  padding: 8px 10px;
+  background: #141414;
+  border: 1px solid #1f1f23;
+  border-radius: 8px;
+}
+
+.metricBlockTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #71717a;
+}
+
+.metricPending {
+  font-size: 0.62rem;
+  font-weight: 500;
+  text-transform: lowercase;
+  color: #fbbf24;
+  letter-spacing: 0;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+}
+
+.metricCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: #0f0f10;
+  border-radius: 6px;
+}
+
+.metricLabel {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: #71717a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metricValue {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #e4e4e7;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metricValue.accent {
+  color: #4ade80;
+}
+
+.jobsPanel .jobsList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.statusBadge-passed { background: #14532d44; color: #4ade80; }
+.statusBadge-failed { background: #7f1d1d44; color: #f87171; }
+.statusBadge-compiling,
+.statusBadge-phase1_running,
+.statusBadge-phase2_running { background: #78350f44; color: #fbbf24; }
+.statusBadge-queued { background: #27272a; color: #a1a1aa; }
+
+.shutdownTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.leaderboardCard .shutdownTags {
+  margin-top: 6px;
+}
+
+.shutdownTag {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.leaderboardCard .shutdownTag {
+  font-size: 0.62rem;
+  padding: 1px 6px;
+}
+
+.shutdownTag-ok {
+  background: #14532d33;
+  color: #86efac;
+}
+
+.shutdownTag-warn {
+  background: #78350f33;
+  color: #fcd34d;
+}
+
+.jobCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.jobError {
+  margin-top: 8px;
+  padding: 8px;
+  background: #1c0a0a;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: #fca5a5;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.emptyState {
+  padding: 32px 20px;
+  text-align: center;
+  color: #52525b;
+  font-size: 0.9rem;
+}

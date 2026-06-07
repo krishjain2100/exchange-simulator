@@ -1,32 +1,19 @@
-# Use  Linux image with a C++ compiler
+# Use a lightweight Linux image with a C++ compiler
 FROM alpine:latest
 
-# This pulls a bare-bones version of Linux called Alpine. 
-# It is incredibly small (about 5MB), sandbox will boot up in milliseconds rather than seconds.
-
-# Install g++ and standard libraries
+# Install g++ and standard libraries (apk is Alpine's package manager)
+# --no-cache keeps the image incredibly small by deleting installation temp files
 RUN apk add --no-cache g++ make bash
-# apk is Alpine's package manager (like brew for Mac or apt for Ubuntu)
-# --no-cache flag: instruction to download the software, install it, and completely delete all the indexes and temporary files used to get it.
 
-# Create a directory for  core files
+# Trusted core infrastructure — overridden at runtime by worker.js via:
+#   -v <repo>/core:/core:ro
 WORKDIR /core
-
-# Copy files from your Mac into the Docker image
-COPY core/Wrapper.cpp /core/Wrapper.cpp
-COPY core/ExchangeEngine.h /core/ExchangeEngine.h
-COPY core/Order.h /core/Order.h
-COPY core/Telemetry.h /core/Telemetry.h
-COPY core/runner.sh /core/runner.sh
-COPY core/bot_fleet.cpp /core/bot_fleet.cpp
-RUN g++ -O3 -std=c++17 /core/bot_fleet.cpp -o /core/bot_fleet
-# The above line compiles the bot_fleet.cpp file into an executable called bot_fleet for linux.
-
-# Ensure the executables can be run
-RUN chmod +x /core/bot_fleet
+COPY core/ /core/
 RUN chmod +x /core/runner.sh
-# By default, copied files are just readable text. 
-# This command changes their permissions to make them "eXecutable" programs
 
-# The container will start by running our script
+# CRITICAL: Switch the working directory to where the participant's code will be injected
+# When the worker.js runs `docker run -v ./run_env/job_123:/sandbox`, this is where it lands.
+WORKDIR /sandbox
+
+# The container will start by executing our runner script
 ENTRYPOINT ["/core/runner.sh"]

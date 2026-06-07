@@ -1,0 +1,14 @@
+node_modules/
+.DS_Store
+.env
+*.log
+/run_env
+/uploads
+dist/
+build/
+*.txt
+*.bin
+bot_node/bot_fleet
+bot_node/bot_replay
+bot_node/generate_benchmark_load
+worker/verifier

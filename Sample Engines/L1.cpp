@@ -2,6 +2,7 @@
 #include "Telemetry.h"
 #include <algorithm>
 #include <iostream>
+#include <unordered_set>
 #include <vector>
 
 // The "Naive" implementation standard developers would write
@@ -11,6 +12,7 @@ private:
   // No O(1) array indexing by instrument.
   std::vector<Order> bids;
   std::vector<Order> asks;
+  std::unordered_set<uint64_t> seen_sequences;
 
   void HandleCancel(const Order &cancel_order) {
     // DEADLY SIN 2: O(N) Linear Search for Cancels
@@ -36,23 +38,43 @@ private:
   }
 
   bool WouldSelfMatch(const Order &incoming) {
+    uint32_t qty_to_check = incoming.quantity;
+
     if (incoming.side == Side::BUY) {
+      std::sort(asks.begin(), asks.end(), [](const Order &a, const Order &b) {
+        if (a.price == b.price)
+          return a.sequence_id < b.sequence_id;
+        return a.price < b.price;
+      });
+
       for (const auto &ask : asks) {
         if (ask.instrument_id != incoming.instrument_id)
           continue;
         if (incoming.type == OrderType::LIMIT && incoming.price < ask.price)
-          continue;
+          break;
+        if (qty_to_check == 0)
+          break;
         if (ask.client_id == incoming.client_id)
           return true;
+        qty_to_check = (qty_to_check > ask.quantity) ? (qty_to_check - ask.quantity) : 0;
       }
     } else {
+      std::sort(bids.begin(), bids.end(), [](const Order &a, const Order &b) {
+        if (a.price == b.price)
+          return a.sequence_id < b.sequence_id;
+        return a.price > b.price;
+      });
+
       for (const auto &bid : bids) {
         if (bid.instrument_id != incoming.instrument_id)
           continue;
         if (incoming.type == OrderType::LIMIT && incoming.price > bid.price)
-          continue;
+          break;
+        if (qty_to_check == 0)
+          break;
         if (bid.client_id == incoming.client_id)
           return true;
+        qty_to_check = (qty_to_check > bid.quantity) ? (qty_to_check - bid.quantity) : 0;
       }
     }
     return false;
@@ -64,9 +86,13 @@ public:
               << std::endl;
     bids.reserve(100000);
     asks.reserve(100000);
+    seen_sequences.reserve(2000000);
   }
 
   void ProcessOrder(const Order &order) override {
+    if (!seen_sequences.insert(order.sequence_id).second)
+      return;
+
     if (order.type == OrderType::CANCEL) {
       HandleCancel(order);
       return;
@@ -151,12 +177,14 @@ public:
     }
   }
 
-  std::vector<Order> GetRestingOrders() const override {
+  std::vector<Order> GetRestingOrders(uint16_t instrument_id) const override {
     std::vector<Order> resting;
     for (const auto &b : bids)
-      resting.push_back(b);
+      if (b.instrument_id == instrument_id)
+        resting.push_back(b);
     for (const auto &a : asks)
-      resting.push_back(a);
+      if (a.instrument_id == instrument_id)
+        resting.push_back(a);
     return resting;
   }
 };

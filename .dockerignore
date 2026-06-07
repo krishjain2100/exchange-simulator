@@ -1,0 +1,8 @@
+# .dockerignore
+node_modules/
+gateway/
+bot_node/
+worker/node_modules/
+Sample Engines/
+.git/
+dump.rdb

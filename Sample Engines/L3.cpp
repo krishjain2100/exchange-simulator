@@ -5,6 +5,7 @@
 #include <list>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 class AdvancedEngine : public ExchangeEngine {
 private:
@@ -23,6 +24,7 @@ private:
     Side side;
   };
   std::unordered_map<uint64_t, OrderLocation> order_index;
+  std::unordered_set<uint64_t> seen_sequences;
 
   void HandleCancel(const Order &cancel_order) {
     uint16_t inst = cancel_order.instrument_id;
@@ -114,9 +116,13 @@ public:
                  "Tracking)..."
               << std::endl;
     order_index.reserve(2000000); // Pre-allocate hash map to avoid rehashing
+    seen_sequences.reserve(2000000);
   }
 
   void ProcessOrder(const Order &current) override {
+    if (!seen_sequences.insert(current.sequence_id).second)
+      return;
+
     if (current.type == OrderType::CANCEL) {
       HandleCancel(current);
       return;
@@ -204,17 +210,16 @@ public:
     }
   }
 
-  std::vector<Order> GetRestingOrders() const override {
+  std::vector<Order> GetRestingOrders(uint16_t instrument_id) const override {
     std::vector<Order> resting;
-    for (int i = 0; i < INSTRUMENT_COUNT; ++i) {
-      for (const auto &[price, level] : bids[i]) {
-        for (const auto &o : level)
-          resting.push_back(o);
-      }
-      for (const auto &[price, level] : asks[i]) {
-        for (const auto &o : level)
-          resting.push_back(o);
-      }
+    if (instrument_id >= INSTRUMENT_COUNT) return resting;
+    for (const auto &[price, level] : bids[instrument_id]) {
+      for (const auto &o : level)
+        resting.push_back(o);
+    }
+    for (const auto &[price, level] : asks[instrument_id]) {
+      for (const auto &o : level)
+        resting.push_back(o);
     }
     return resting;
   }
