@@ -31,7 +31,6 @@ services:
 
   bot-orchestrator:
     image: node:20-bullseye
-    container_name: hft-bot-orchestrator
     working_dir: /workspace/bot_node
     volumes:
       - .:/workspace
