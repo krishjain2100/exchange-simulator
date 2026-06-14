@@ -4,8 +4,6 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const { processJob } = require('./jobRunner');
 const { connectRedisWithRetry } = require('../shared/redisStore');
 
-const CONCURRENT_WORKERS = 1;
-
 async function startWorker() {
     const workerClient = redis.createClient({ url: process.env.REDIS_URL });
 
@@ -34,8 +32,6 @@ async function boot() {
         console.error('[Worker] REDIS_URL is not set');
         process.exit(1);
     }
-
-    console.log(`[Worker] Booting up ${CONCURRENT_WORKERS} concurrent worker...`);
     await startWorker();
 }
 

@@ -9,6 +9,6 @@ build/
 *.txt
 *.bin
 bot_node/bot_fleet
-bot_node/bot_replay
-bot_node/generate_benchmark_load
+scripts/generate_nasdaq_level
+worker/bot_replay
 worker/verifier

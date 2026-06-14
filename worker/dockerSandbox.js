@@ -1,19 +1,31 @@
 const { spawn } = require('child_process');
 const getPort = require('get-port');
+const ip = require('ip');
 const createLogger = require('../shared/logger');
-const { waitForEngineReady } = require('./engine');
-const { startPhase1Load, startPhase2Load, stopLoadTimers } = require('./phaseLoad');
-const { CORE_DIR, DOCKER_HARD_LIMIT_MS, DOCKER_MAX_MEMORY_MB, DOCKER_MAX_CPUS, PHASE1_LOAD_FAILURE_MSG, PHASE2_LOAD_FAILURE_MSG } = require('./config');
-
+const { waitForEngineReady, waitForNextProbe, attachStdoutBuffer } = require('./engine');
+const { startPhase1Load, stopLoadTimers } = require('./phaseLoad');
+const { searchBenchmarkBrackets } = require('./benchmarkSearch');
+const { TelemetryListener } = require('./telemetryListener');
+const {
+    CORE_DIR,
+    DOCKER_HARD_LIMIT_MS,
+    DOCKER_MAX_MEMORY_MB,
+    DOCKER_MAX_CPUS,
+    BENCHMARK_FAILURE_QUEUE_DEPTH,
+    BENCHMARK_FAILURE_PROCESS_TIME_NS,
+    BENCHMARK_FAILURE_DEBOUNCE,
+    PHASE1_LOAD_FAILURE_MSG,
+} = require('./config');
 
 const log = createLogger('Worker');
 
+function telemetryHost() {
+    return process.env.HFT_TELEMETRY_HOST || ip.address();
+}
+
 function extractDockerFailureMessage(code, signal, dockerStderr, forcedReason) {
     if (forcedReason) return forcedReason;
-
-    if (signal === 'SIGKILL') {
-        return `Docker process killed after exceeding ${DOCKER_HARD_LIMIT_MS / 1000}s hard limit`;
-    }
+    if (signal === 'SIGKILL') return 'Docker process killed after exceeding hard limit';
 
     const lines = dockerStderr.split('\n').map((line) => line.trim()).filter(Boolean);
     const dockerError = lines.find((line) => line.includes('[Docker ERROR]'));
@@ -22,78 +34,174 @@ function extractDockerFailureMessage(code, signal, dockerStderr, forcedReason) {
     const compilerError = lines.find((line) => /error:/i.test(line));
     if (compilerError) return compilerError.slice(0, 2000);
 
-    const tail = lines.slice(-6).join(' | ');
-    return tail || `Docker exited with code ${code}`;
+    return lines.slice(-6).join(' | ') || `Docker exited with code ${code}`;
+}
+
+function removeContainer(containerName) {
+    return new Promise((resolve) => {
+        spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore' })
+            .on('close', () => resolve())
+            .on('error', () => resolve());
+    });
 }
 
 function forceStopContainer(containerName, dockerProcess) {
-    spawn('docker', ['kill', containerName], { stdio: 'ignore' }).on('error', () => {});
-    if (dockerProcess && !dockerProcess.killed) {
+    spawn('docker', ['rm', '-f', containerName], { stdio: 'ignore' }).on('error', () => { });
+    if (dockerProcess && !dockerProcess.killed)
         dockerProcess.kill('SIGKILL');
-    }
 }
 
-async function runDockerSandbox({ job_id, jobDir, workerClient, phase }) {
-    const dynamicPort = await getPort();
-    const containerName = `hft-${job_id}-${phase}`;
-    let forcedStopReason = null;
+function buildDockerArgs({ containerName, port, jobDir, env }) {
+    const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+    return [
+        'run', '--rm', '--name', containerName,
+        '-p', `${port}:8080`,
+        `--cpus=${DOCKER_MAX_CPUS}`, `--memory=${DOCKER_MAX_MEMORY_MB}m`,
+        ...envArgs,
+        '-v', `${jobDir}:/sandbox`,
+        '-v', `${CORE_DIR}:/core:ro`,
+        'hft-sandbox',
+    ];
+}
+
+async function runContainer({
+    containerName,
+    jobDir,
+    env,
+    timeoutMs,
+    timeoutReason,
+    onReady,
+    acceptCompletedAsSuccess = false,
+}) {
+    const port = await getPort();
+    await removeContainer(containerName);
 
     return new Promise((resolve, reject) => {
-        const dockerProcess = spawn('docker', [
-            'run', '--rm', '--name', containerName, '-p', `${dynamicPort}:8080`,
-            `--cpus=${DOCKER_MAX_CPUS}`, `--memory=${DOCKER_MAX_MEMORY_MB}m`,
-            '-e', `HFT_RUN_MODE=${phase}`,
-            '-v', `${jobDir}:/sandbox`,
-            '-v', `${CORE_DIR}:/core:ro`,
-            'hft-sandbox',
-        ], { timeout: DOCKER_HARD_LIMIT_MS, killSignal: 'SIGKILL' });
+        const dockerProcess = spawn('docker', buildDockerArgs({ containerName, port, jobDir, env }), {
+            timeout: timeoutMs,
+            killSignal: 'SIGKILL',
+        });
 
-        let dockerCrashed = false;
-        let dockerStderr = '';
-        let loadTimers = null;
+        let settled = false;
+        let stderr = '';
+        let forcedReason = null;
+        let loadCleanup = null;
+        let completed = false;
 
-        dockerProcess.stdout.on('data', (data) => process.stdout.write(data.toString()));
-        dockerProcess.stderr.on('data', (data) => {
-            dockerStderr += data.toString();
-            process.stderr.write(data.toString());
+        const controls = {
+            port,
+            dockerProcess,
+            setForcedReason: (reason) => { forcedReason = reason; },
+            onCleanup: (fn) => { loadCleanup = fn; },
+            forceStop: () => forceStopContainer(containerName, dockerProcess),
+        };
+
+        const hardTimer = setTimeout(() => {
+            forcedReason = forcedReason || timeoutReason || `Container ${containerName} exceeded ${timeoutMs / 1000}s`;
+            controls.forceStop();
+        }, timeoutMs);
+
+        const cleanup = () => {
+            clearTimeout(hardTimer);
+            if (loadCleanup) loadCleanup();
+        };
+
+        const settle = (fn) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            fn();
+        };
+
+        attachStdoutBuffer(dockerProcess);
+        dockerProcess.stderr.on('data', (d) => {
+            stderr += d.toString();
         });
 
         (async () => {
             try {
-                await waitForEngineReady(dockerProcess, dynamicPort);
-                if (dockerCrashed) return;
-
-                loadTimers = phase === 'correctness'
-                    ? await startPhase1Load(workerClient, job_id, dynamicPort, {
-                        onForceStop: () => {
-                            forcedStopReason = PHASE1_LOAD_FAILURE_MSG;
-                            forceStopContainer(containerName, dockerProcess);
-                        },
-                    })
-                    : await startPhase2Load(dynamicPort, {
-                        onForceStop: () => {
-                            forcedStopReason = PHASE2_LOAD_FAILURE_MSG;
-                            forceStopContainer(containerName, dockerProcess);
-                        },
-                    });
+                await waitForEngineReady(dockerProcess, port);
+                await onReady(controls);
+                completed = true;
             } catch (err) {
-                dockerCrashed = true;
-                stopLoadTimers(loadTimers);
-                reject(err);
+                controls.forceStop();
+                settle(() => reject(err));
             }
         })();
 
-        dockerProcess.on('error', (err) => {
-            dockerCrashed = true;
-            reject(err);
-        });
+        dockerProcess.on('error', (err) => settle(() => reject(err)));
 
         dockerProcess.on('close', (code, signal) => {
-            stopLoadTimers(loadTimers);
-            if (code === 0) resolve();
-            else reject(new Error(extractDockerFailureMessage(code, signal, dockerStderr, forcedStopReason)));
+            settle(() => {
+                const ok = code === 0 || (acceptCompletedAsSuccess && completed);
+                if (ok) resolve();
+                else reject(new Error(extractDockerFailureMessage(code, signal, stderr, forcedReason)));
+            });
         });
     });
 }
 
-module.exports = { runDockerSandbox };
+async function driveCorrectness(controls, { workerClient, job_id }) {
+    const timers = await startPhase1Load(workerClient, job_id, controls.port, {
+        onForceStop: () => {
+            controls.setForcedReason(PHASE1_LOAD_FAILURE_MSG);
+            controls.forceStop();
+        },
+    });
+    controls.onCleanup(() => stopLoadTimers(timers));
+}
+
+async function driveBenchmark(controls, { workerClient, job_id, jobDir }) {
+    const { port } = controls;
+    const peakPassResult = await searchBenchmarkBrackets({
+        jobDir,
+        port,
+        workerClient,
+        job_id,
+        waitForNextProbe: () => waitForNextProbe(controls.dockerProcess, port),
+    });
+    controls.forceStop();
+    return peakPassResult;
+}
+
+const PHASE_CONFIG = {
+    correctness: {
+        timeoutMs: DOCKER_HARD_LIMIT_MS,
+        acceptCompletedAsSuccess: false,
+        env: () => ({ HFT_RUN_MODE: 'correctness' }),
+        drive: driveCorrectness,
+    },
+    benchmark: {
+        timeoutMs: DOCKER_HARD_LIMIT_MS,
+        acceptCompletedAsSuccess: true,
+        env: () => ({
+            HFT_RUN_MODE: 'benchmark',
+            HFT_MAX_QUEUE_DEPTH: BENCHMARK_FAILURE_QUEUE_DEPTH,
+            HFT_MAX_PROCESS_TIME_NS: BENCHMARK_FAILURE_PROCESS_TIME_NS,
+        }),
+        drive: driveBenchmark,
+    },
+};
+
+async function runSandbox({ job_id, jobDir, phase, workerClient }) {
+    const config = PHASE_CONFIG[phase];
+    let peakPassResult;
+
+    await runContainer({
+        containerName: `hft-${job_id}-${phase}`,
+        jobDir,
+        env: config.env(),
+        timeoutMs: config.timeoutMs,
+        timeoutReason: `${phase} exceeded ${config.timeoutMs / 1000}s`,
+        acceptCompletedAsSuccess: config.acceptCompletedAsSuccess,
+        onReady: async (controls) => {
+            peakPassResult = await config.drive(controls, { workerClient, job_id, jobDir });
+        },
+    });
+
+    if (phase !== 'benchmark') return;
+
+    return peakPassResult;
+}
+
+module.exports = { runSandbox };

@@ -42,4 +42,9 @@ uint64_t GetTotalTradeCount() {
   return total;
 }
 
+void Reset() {
+  for (auto &ledger : g_trade_hashes)
+    ledger.clear();
+}
+
 } // namespace Telemetry

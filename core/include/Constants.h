@@ -5,7 +5,7 @@
 constexpr int NUM_INSTRUMENTS = 4;
 constexpr int SHARD_COUNT = NUM_INSTRUMENTS + 1;
 
-// Docker env HFT_RUN_MODE — keep in sync with worker STAGE constants.
+// Docker env run mode — keep in sync with worker STAGE constants.
 constexpr const char *RUN_MODE_CORRECTNESS = "correctness";
 constexpr const char *RUN_MODE_BENCHMARK = "benchmark";
 
@@ -15,11 +15,8 @@ constexpr uint64_t SLA_THRESHOLD_NS = 1'000'000'000;
 // Ring buffer capacity (compile-time). Must exceed both phase thresholds.
 constexpr size_t ORDER_QUEUE_CAPACITY = 1 << 23; // 8,388,608
 
-// Circuit-breaker backlog limits (runtime, via HFT_RUN_MODE).
+// Circuit-breaker backlog limit (correctness mode only).
 constexpr size_t PHASE1_MAX_QUEUE_DEPTH = 1'000'000;
-constexpr size_t PHASE2_MAX_QUEUE_DEPTH = 6'000'000;
 
-static_assert(PHASE1_MAX_QUEUE_DEPTH < ORDER_QUEUE_CAPACITY,
-              "Phase 1 threshold must fit inside the ring buffer");
-static_assert(PHASE2_MAX_QUEUE_DEPTH < ORDER_QUEUE_CAPACITY,
-              "Phase 2 threshold must fit inside the ring buffer");
+// Cap stored per-order latencies in benchmark mode to limit memory growth.
+constexpr size_t BENCHMARK_LATENCY_CAP = 2'000'000;

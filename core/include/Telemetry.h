@@ -10,4 +10,5 @@ void ReportTrade(uint16_t instrument_id, uint64_t maker_sequence_id,
 std::vector<uint64_t> GetTradeHashes(uint16_t instrument_id);
 void AppendTradeHash(uint16_t instrument_id, uint64_t hash);
 uint64_t GetTotalTradeCount();
+void Reset();
 } // namespace Telemetry

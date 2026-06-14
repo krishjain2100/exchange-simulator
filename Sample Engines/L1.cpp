@@ -15,26 +15,20 @@ private:
   std::unordered_set<uint64_t> seen_sequences;
 
   void HandleCancel(const Order &cancel_order) {
-    // DEADLY SIN 2: O(N) Linear Search for Cancels
-    uint64_t target_id = cancel_order.price; // Target seq overloaded in price
+    const uint64_t target_id = cancel_order.price;
 
-    if (cancel_order.side == Side::BUY) {
-      for (auto it = bids.begin(); it != bids.end(); ++it) {
+    auto erase_target = [&](std::vector<Order> &book) -> bool {
+      for (auto it = book.begin(); it != book.end(); ++it) {
         if (it->sequence_id == target_id) {
-          // DEADLY SIN 3: O(N) Vector Erase
-          // This forces the CPU to physically shift thousands of orders in RAM
-          bids.erase(it);
-          return;
+          book.erase(it);
+          return true;
         }
       }
-    } else {
-      for (auto it = asks.begin(); it != asks.end(); ++it) {
-        if (it->sequence_id == target_id) {
-          asks.erase(it);
-          return;
-        }
-      }
-    }
+      return false;
+    };
+
+    if (erase_target(bids) || erase_target(asks))
+      return;
   }
 
   bool WouldSelfMatch(const Order &incoming) {
@@ -89,6 +83,15 @@ public:
     seen_sequences.reserve(2000000);
   }
 
+  void Clear() override {
+    bids.clear();
+    asks.clear();
+    seen_sequences.clear();
+    bids.reserve(100000);
+    asks.reserve(100000);
+    seen_sequences.reserve(2000000);
+  }
+
   void ProcessOrder(const Order &order) override {
     if (!seen_sequences.insert(order.sequence_id).second)
       return;
@@ -130,9 +133,9 @@ public:
         it->quantity -= match_qty;
 
         if (it->quantity == 0) {
-          it = asks.erase(it); // O(N) memory shift on the hot path!
-        } else {
-          ++it;
+          it = asks.erase(it);
+        } else if (current.quantity == 0) {
+          break;
         }
       }
 
@@ -166,8 +169,8 @@ public:
 
         if (it->quantity == 0) {
           it = bids.erase(it);
-        } else {
-          ++it;
+        } else if (current.quantity == 0) {
+          break;
         }
       }
 

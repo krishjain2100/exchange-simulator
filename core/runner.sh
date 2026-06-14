@@ -7,8 +7,6 @@ set -euo pipefail
 
 cd /sandbox
 
-echo "[Docker] Compiling C++ Engine..."
-
 shopt -s nullglob
 CORE_SOURCES=(/core/src/*.cpp)
 
@@ -17,19 +15,22 @@ if [ ${#CORE_SOURCES[@]} -eq 0 ]; then
     exit 1
 fi
 
-if ! g++ -O3 -std=c++17 -I/core/include \
-  "${CORE_SOURCES[@]}" \
-  submission.cpp -o engine -lpthread 2>&1; then
-  echo "[Docker ERROR] Compilation failed. Check g++ output above."
-  exit 1
+if [ -x ./engine ]; then
+    echo "[Docker] Using cached engine binary (skip compile)."
+else
+    echo "[Docker] Compiling C++ Engine..."
+    if ! g++ -O3 -std=c++17 -I/core/include \
+      "${CORE_SOURCES[@]}" \
+      submission.cpp -o engine -lpthread 2>&1; then
+      echo "[Docker ERROR] Compilation failed. Check g++ output above."
+      exit 1
+    fi
+    echo "[Docker] Compilation successful."
 fi
 
-echo "[Docker] Compilation successful."
 echo "[Docker] Booting Engine on Port 8080. Awaiting Distributed Swarm..."
 
-# Run the engine in the foreground. 
-# The script will block here until load test completes and the engine shuts down (either gracefully or via crash).
-./engine 
+./engine
 
 EXIT_CODE=$?
 

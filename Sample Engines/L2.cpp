@@ -22,38 +22,23 @@ private:
     uint16_t inst = cancel_order.instrument_id;
     uint64_t target_seq = cancel_order.price;
 
-    // O(N) Search penalty remains to prove the baseline
-    if (cancel_order.side == Side::BUY) {
-      for (auto map_it = bids[inst].begin(); map_it != bids[inst].end();
-           ++map_it) {
+    auto erase_from = [&](auto &book) -> bool {
+      for (auto map_it = book.begin(); map_it != book.end(); ++map_it) {
         auto &level = map_it->second;
         for (auto list_it = level.begin(); list_it != level.end(); ++list_it) {
           if (list_it->sequence_id == target_seq) {
             level.erase(list_it);
-            // THE FIX: Destroy the Ghost Level immediately
-            if (level.empty()) {
-              bids[inst].erase(map_it);
-            }
-            return;
+            if (level.empty())
+              book.erase(map_it);
+            return true;
           }
         }
       }
-    } else {
-      for (auto map_it = asks[inst].begin(); map_it != asks[inst].end();
-           ++map_it) {
-        auto &level = map_it->second;
-        for (auto list_it = level.begin(); list_it != level.end(); ++list_it) {
-          if (list_it->sequence_id == target_seq) {
-            level.erase(list_it);
-            // THE FIX: Destroy the Ghost Level immediately
-            if (level.empty()) {
-              asks[inst].erase(map_it);
-            }
-            return;
-          }
-        }
-      }
-    }
+      return false;
+    };
+
+    if (erase_from(bids[inst]) || erase_from(asks[inst]))
+      return;
   }
 
   bool WouldSelfMatch(const Order &incoming) {
@@ -102,6 +87,15 @@ public:
     seen_sequences.reserve(2000000);
   }
 
+  void Clear() override {
+    for (auto &book : bids)
+      book.clear();
+    for (auto &book : asks)
+      book.clear();
+    seen_sequences.clear();
+    seen_sequences.reserve(2000000);
+  }
+
   void ProcessOrder(const Order &current) override {
     if (!seen_sequences.insert(current.sequence_id).second)
       return;
@@ -138,8 +132,8 @@ public:
 
           if (order_it->quantity == 0) {
             order_it = level.erase(order_it);
-          } else {
-            ++order_it;
+          } else if (order.quantity == 0) {
+            break;
           }
         }
 
@@ -175,8 +169,8 @@ public:
 
           if (order_it->quantity == 0) {
             order_it = level.erase(order_it);
-          } else {
-            ++order_it;
+          } else if (order.quantity == 0) {
+            break;
           }
         }
 

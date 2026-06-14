@@ -37,42 +37,24 @@ void WriteVerificationPayload(ExchangeEngine *engine) {
 }
 
 void WriteThroughputMetrics(uint64_t orders_processed, uint64_t trades_executed,
-                            uint64_t processing_duration_ns,
+                            uint64_t processing_duration_ns, uint64_t max_ops,
                             const char *shutdown_reason) {
-  const uint64_t duration_ns =
-      processing_duration_ns > 0 ? processing_duration_ns : 1;
-  const double duration_sec =
-      static_cast<double>(duration_ns) / 1'000'000'000.0;
-  const uint64_t order_tps =
-      static_cast<uint64_t>(static_cast<double>(orders_processed) / duration_sec);
-  const uint64_t trade_tps =
-      static_cast<uint64_t>(static_cast<double>(trades_executed) / duration_sec);
-
   std::ofstream throughput_file("phase1_throughput.txt");
   throughput_file << orders_processed << "," << trades_executed << ","
-                  << processing_duration_ns << "," << order_tps << ","
-                  << trade_tps << "," << shutdown_reason;
+                  << processing_duration_ns << "," << max_ops << ","
+                  << shutdown_reason << ",0,0,0\n";
   throughput_file.close();
 
   std::cout << "[Wrapper] Throughput -> orders: " << orders_processed
             << " | trades: " << trades_executed
-            << " | order TPS: " << order_tps << " | trade TPS: " << trade_tps
+            << " | max_ops: " << max_ops
             << " | shutdown: " << shutdown_reason << std::endl;
 }
 
 void WriteBenchmarkMetrics(uint64_t orders_processed, uint64_t trades_executed,
-                           uint64_t processing_duration_ns,
+                           uint64_t processing_duration_ns, uint64_t max_ops,
                            const char *shutdown_reason,
                            const std::vector<uint64_t> &latencies) {
-  const uint64_t duration_ns =
-      processing_duration_ns > 0 ? processing_duration_ns : 1;
-  const double duration_sec =
-      static_cast<double>(duration_ns) / 1'000'000'000.0;
-  const uint64_t order_tps =
-      static_cast<uint64_t>(static_cast<double>(orders_processed) / duration_sec);
-  const uint64_t trade_tps =
-      static_cast<uint64_t>(static_cast<double>(trades_executed) / duration_sec);
-
   uint64_t p50 = 0, p90 = 0, p99 = 0;
   if (!latencies.empty()) {
     std::vector<uint64_t> sorted = latencies;
@@ -90,21 +72,31 @@ void WriteBenchmarkMetrics(uint64_t orders_processed, uint64_t trades_executed,
 
   std::ofstream metrics_file("phase2_metrics.txt");
   metrics_file << orders_processed << "," << trades_executed << ","
-               << processing_duration_ns << "," << order_tps << ","
-               << trade_tps << "," << shutdown_reason << ","
-               << p50 << "," << p90 << "," << p99 << "\n";
+               << processing_duration_ns << "," << max_ops << ","
+               << shutdown_reason << "," << p50 << "," << p90 << "," << p99
+               << "\n";
   metrics_file.close();
 
   std::cout << "[Wrapper] Throughput -> orders: " << orders_processed
             << " | trades: " << trades_executed
-            << " | order TPS: " << order_tps << " | trade TPS: " << trade_tps
+            << " | max_ops: " << max_ops
             << " | shutdown: " << shutdown_reason << std::endl;
   std::cout << "[Wrapper] Latency (ns) -> p50: " << p50 << " | p90: " << p90
             << " | p99: " << p99 << std::endl;
 }
 
+void FinalizeProbe(uint64_t orders_processed, uint64_t trades_executed,
+                   uint64_t processing_duration_ns, uint64_t max_ops,
+                   const char *shutdown_reason,
+                   const std::vector<uint64_t> &latencies) {
+  WriteBenchmarkMetrics(orders_processed, trades_executed, processing_duration_ns,
+                        max_ops, shutdown_reason, latencies);
+  std::cout << "[Wrapper] Probe ready\n" << std::flush;
+}
+
 void FinalizeAndExit(ExchangeEngine *engine, RunContext &ctx,
-                     uint64_t processing_duration_ns, const char *shutdown_reason) {
+                     uint64_t processing_duration_ns, const char *shutdown_reason,
+                     uint64_t max_ops) {
   const bool benchmark = ctx.IsBenchmarkMode();
   const uint64_t trades_executed = Telemetry::GetTotalTradeCount();
   const uint64_t orders_processed = benchmark ? ctx.latencies.size() : ctx.input_ledger.size();
@@ -114,13 +106,17 @@ void FinalizeAndExit(ExchangeEngine *engine, RunContext &ctx,
             << " to SSD...\n";
 
   if (benchmark) {
-    WriteBenchmarkMetrics(orders_processed, trades_executed, processing_duration_ns, shutdown_reason, ctx.latencies);
+    WriteBenchmarkMetrics(orders_processed, trades_executed, processing_duration_ns,
+                          max_ops, shutdown_reason, ctx.latencies);
   } else {
-    WriteThroughputMetrics(orders_processed, trades_executed, processing_duration_ns, shutdown_reason);
+    WriteThroughputMetrics(orders_processed, trades_executed, processing_duration_ns,
+                           max_ops, shutdown_reason);
     WriteInputLedger(ctx.input_ledger);
     WriteVerificationPayload(engine);
   }
 
   std::cout << "========================================\n";
   _exit(0);
-}} // namespace Artifacts
+}
+
+} // namespace Artifacts

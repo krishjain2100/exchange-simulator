@@ -20,6 +20,7 @@ private:
   // LEVEL 3 UPGRADE: A basic Hash Map to track Price and Side, but NOT the
   // memory pointer.
   struct OrderLocation {
+    uint16_t inst;
     uint64_t price;
     Side side;
   };
@@ -27,24 +28,20 @@ private:
   std::unordered_set<uint64_t> seen_sequences;
 
   void HandleCancel(const Order &cancel_order) {
-    uint16_t inst = cancel_order.instrument_id;
-    uint64_t target_seq = cancel_order.price;
+    const uint64_t target_seq = cancel_order.price;
 
-    // O(1) Hash Map lookup to find where the order lives
     auto loc_it = order_index.find(target_seq);
     if (loc_it == order_index.end())
-      return; // Ghost cancel
+      return;
 
-    uint64_t price = loc_it->second.price;
-    Side side = loc_it->second.side;
+    const uint16_t inst = loc_it->second.inst;
+    const uint64_t price = loc_it->second.price;
+    const Side side = loc_it->second.side;
 
     if (side == Side::BUY) {
       auto level_it = bids[inst].find(price);
       if (level_it != bids[inst].end()) {
         auto &level = level_it->second;
-
-        // THE FLAW: We found the price level instantly, but we still have to do
-        // an O(K) linear scan through the list to find the exact order!
         for (auto list_it = level.begin(); list_it != level.end(); ++list_it) {
           if (list_it->sequence_id == target_seq) {
             level.erase(list_it);
@@ -58,7 +55,6 @@ private:
       auto level_it = asks[inst].find(price);
       if (level_it != asks[inst].end()) {
         auto &level = level_it->second;
-
         for (auto list_it = level.begin(); list_it != level.end(); ++list_it) {
           if (list_it->sequence_id == target_seq) {
             level.erase(list_it);
@@ -119,6 +115,17 @@ public:
     seen_sequences.reserve(2000000);
   }
 
+  void Clear() override {
+    for (auto &book : bids)
+      book.clear();
+    for (auto &book : asks)
+      book.clear();
+    order_index.clear();
+    seen_sequences.clear();
+    order_index.reserve(2000000);
+    seen_sequences.reserve(2000000);
+  }
+
   void ProcessOrder(const Order &current) override {
     if (!seen_sequences.insert(current.sequence_id).second)
       return;
@@ -154,10 +161,10 @@ public:
           order_it->quantity -= match_qty;
 
           if (order_it->quantity == 0) {
-            order_index.erase(order_it->sequence_id); // Clean up hash map
+            order_index.erase(order_it->sequence_id);
             order_it = level.erase(order_it);
-          } else {
-            ++order_it;
+          } else if (order.quantity == 0) {
+            break;
           }
         }
         if (level.empty())
@@ -168,7 +175,7 @@ public:
 
       if (order.quantity > 0 && order.type == OrderType::LIMIT) {
         bids[inst][order.price].push_back(order);
-        order_index[order.sequence_id] = {order.price, Side::BUY}; // Index it!
+        order_index[order.sequence_id] = {inst, order.price, Side::BUY};
       }
 
     } else {
@@ -191,10 +198,10 @@ public:
           order_it->quantity -= match_qty;
 
           if (order_it->quantity == 0) {
-            order_index.erase(order_it->sequence_id); // Clean up hash map
+            order_index.erase(order_it->sequence_id);
             order_it = level.erase(order_it);
-          } else {
-            ++order_it;
+          } else if (order.quantity == 0) {
+            break;
           }
         }
         if (level.empty())
@@ -205,7 +212,7 @@ public:
 
       if (order.quantity > 0 && order.type == OrderType::LIMIT) {
         asks[inst][order.price].push_back(order);
-        order_index[order.sequence_id] = {order.price, Side::SELL}; // Index it!
+        order_index[order.sequence_id] = {inst, order.price, Side::SELL};
       }
     }
   }

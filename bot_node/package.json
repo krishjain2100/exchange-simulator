@@ -2,14 +2,9 @@
   "name": "bot-node",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
   "scripts": {
-    "start": "node bot_worker.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node bot_worker.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "redis": "^5.12.1",

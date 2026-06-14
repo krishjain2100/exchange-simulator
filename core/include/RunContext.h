@@ -28,6 +28,9 @@ public:
   // Circuit breaker — stop ingress immediately (dispatcher may abandon backlog).
   void SignalShutdown();
   bool ShouldStopAccepting() const;
+  bool IsShutdown() const { return shutdown_.load(); }
+  bool IsHealthBreach() const { return health_breached_.load(); }
+  void SignalHealthBreach();
 
   void OnClientConnected();
   void OnClientDisconnected();
@@ -38,6 +41,8 @@ public:
   size_t MaxQueueDepth() const { return max_queue_depth_; }
   const char *RunMode() const { return run_mode_; }
   bool IsBenchmarkMode() const;
+
+  void ResetForNextProbe();
 
   std::vector<Order> input_ledger;
   std::vector<uint64_t> latencies;
@@ -50,7 +55,9 @@ private:
   std::condition_variable queue_cv_;
   std::atomic<bool> ingress_closed_{false};
   std::atomic<bool> shutdown_{false};
+  std::atomic<bool> health_breached_{false};
   std::atomic<int> active_clients_{0};
   std::atomic<bool> orders_received_{false};
+  std::atomic<bool> dispatcher_waiting_{false};
   int server_fd_{-1};
 };

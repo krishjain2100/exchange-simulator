@@ -195,6 +195,8 @@ void RunIngressLoop(int server_fd, int epfd, RunContext &ctx) {
   epoll_event events[kMaxEvents];
 
   while (!ctx.ShouldStopAccepting() || !clients.empty()) {
+    if (ctx.IsShutdown())
+      break;
     const int ready =
         epoll_wait(epfd, events, kMaxEvents, kEpollWaitMs);
     if (ready < 0) {
@@ -251,6 +253,8 @@ void RunIngressLoop(int server_fd, int kq, RunContext &ctx) {
   timespec timeout{0, kEpollWaitMs * 1000000L};
 
   while (!ctx.ShouldStopAccepting() || !clients.empty()) {
+    if (ctx.IsShutdown())
+      break;
     const int ready =
         kevent(kq, nullptr, 0, events, kMaxEvents, &timeout);
     if (ready < 0) {

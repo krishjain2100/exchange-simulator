@@ -6,47 +6,24 @@ const POLL_MS = 3000;
 const FIELD_LABELS = {
   orders_processed: 'Orders',
   trades_executed: 'Trades',
-  order_tps: 'Order TPS',
-  trade_tps: 'Trade TPS',
+  max_ops: 'Max ops/s',
+  processing_duration_ns: 'Processing time',
+  peak_multiplier: 'Peak level',
+  peak_target_ops: 'Target ops/s',
   p50: 'p50',
   p90: 'p90',
   p99: 'p99',
-  final_score: 'Total',
-  benchmark_score: 'Benchmark',
-  throughput_score: 'Throughput',
+  final_score: 'Score',
   p99_penalty: 'p99 penalty',
-  latency_ratio: 'Latency ratio',
 };
 
-const PHASE1_KEYS = [
-  'orders_processed',
-  'trades_executed',
-  'order_tps',
-  'trade_tps',
-];
-
-const PHASE2_KEYS = [
-  'orders_processed',
-  'trades_executed',
-  'order_tps',
-  'trade_tps',
-  'p50',
-  'p90',
-  'p99',
-];
-
-const SCORE_KEYS = [
-  'final_score',
-  'benchmark_score',
-  'throughput_score',
-  'p99_penalty',
-  'latency_ratio',
-];
+const PHASE1_KEYS = ['orders_processed', 'trades_executed', 'max_ops', 'processing_duration_ns'];
+const PHASE2_KEYS = ['peak_multiplier', 'max_ops', 'peak_target_ops', 'p50', 'p90', 'p99'];
+const SCORE_KEYS = ['final_score', 'max_ops', 'p99_penalty'];
 
 function shortJobId(id) {
   if (!id) return '—';
-  if (id.length <= 16) return id;
-  return `${id.slice(0, 10)}…${id.slice(-6)}`;
+  return id.length <= 16 ? id : `${id.slice(0, 10)}…${id.slice(-6)}`;
 }
 
 function prettyTime(ms) {
@@ -59,14 +36,9 @@ function formatDuration(ms) {
   if (ms == null || ms < 0) return '—';
   const totalSec = Math.floor(ms / 1000);
   if (totalSec < 60) return `${totalSec}s`;
-
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
-  if (min < 60) return sec ? `${min}m ${sec}s` : `${min}m`;
-
-  const hr = Math.floor(min / 60);
-  const remMin = min % 60;
-  return remMin ? `${hr}h ${remMin}m` : `${hr}h`;
+  return sec ? `${min}m ${sec}s` : `${min}m`;
 }
 
 function jobRunDuration(job) {
@@ -83,13 +55,28 @@ function fmtValue(value, opts = {}) {
   return String(value);
 }
 
+function formatDurationFromNs(ns) {
+  if (ns == null || ns < 0) return '—';
+  const ms = ns / 1_000_000;
+  if (ms < 1000) return `${ms.toFixed(ms >= 100 ? 0 : 1)} ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(sec >= 10 ? 1 : 2)} s`;
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  return remSec >= 1 ? `${min}m ${Math.round(remSec)}s` : `${min}m`;
+}
+
 function formatField(key, value) {
   if (value == null || value === '') return '—';
   if (key === 'p99_penalty') return fmtValue(value, { decimals: 3 });
+  if (key === 'peak_multiplier') return `${fmtValue(value)}×`;
+  if (key === 'processing_duration_ns') return formatDurationFromNs(value);
+  if (key === 'max_ops' || key === 'peak_target_ops') {
+    return `${fmtValue(value)} ops/s`;
+  }
   if (key === 'p50' || key === 'p90' || key === 'p99') {
     return `${fmtValue(value)} ns`;
   }
-  if (key === 'latency_ratio') return fmtValue(value, { decimals: 4 });
   return fmtValue(value);
 }
 
@@ -110,17 +97,14 @@ function usePolling(url) {
 
   useEffect(() => {
     let active = true;
-
     const load = async () => {
       try {
         const response = await fetch(url);
-        const result = await response.json();
-        if (active) setData(result);
+        if (active) setData(await response.json());
       } catch (err) {
         console.error(err);
       }
     };
-
     load();
     const interval = setInterval(load, POLL_MS);
     return () => {
@@ -133,8 +117,7 @@ function usePolling(url) {
 }
 
 function MetricBlock({ title, stats, pending }) {
-  if (!stats.length) return null;
-
+  if (!stats.length && !pending) return null;
   return (
     <div className="metricBlock">
       <div className="metricBlockTitle">
@@ -144,8 +127,8 @@ function MetricBlock({ title, stats, pending }) {
       <div className="metricGrid">
         {stats.map(({ key, label, value, accent }) => (
           <div key={key} className="metricCell">
-            <span className="metricLabel" title={label}>{label}</span>
-            <span className={`metricValue ${accent ? 'accent' : ''}`} title={value}>{value}</span>
+            <span className="metricLabel">{label}</span>
+            <span className={`metricValue ${accent ? 'accent' : ''}`}>{value}</span>
           </div>
         ))}
       </div>
@@ -154,44 +137,40 @@ function MetricBlock({ title, stats, pending }) {
 }
 
 function StatusBadge({ status }) {
-  const label = (status || 'unknown').replace(/_/g, ' ');
-  return <span className={`statusBadge statusBadge-${status || 'unknown'}`}>{label}</span>;
+  const isRunningPhase2 = (status || '').startsWith('phase2_running');
+  const badgeClass = isRunningPhase2 ? 'statusBadge-phase2_running' : `statusBadge-${status || 'unknown'}`;
+  return (
+    <span className={`statusBadge ${badgeClass}`}>
+      {(status || 'unknown').replace(/_/g, ' ')}
+    </span>
+  );
 }
 
 const SHUTDOWN_LABELS = {
-  graceful: 'Graceful Exit',
-  queue_overflow: 'Queue Overflow',
-  sla_breach: 'SLA Breach',
-  unknown: 'Unknown',
+  graceful: 'Graceful exit',
+  queue_overflow: 'Queue overflow',
+  sla_breach: 'SLA breach',
 };
-
-function formatShutdownLabel(phase, reason) {
-  const label =
-    SHUTDOWN_LABELS[reason] ??
-    reason.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-  const prefix = phase === 1 ? 'Phase1' : 'Phase 2';
-  return `${prefix}: ${label}`;
-}
 
 function ShutdownTag({ phase, reason }) {
   if (!reason) return null;
-  const isFailure = reason !== 'graceful';
+  const label = SHUTDOWN_LABELS[reason];
+  if (!label) return null;
   return (
-    <span className={`shutdownTag ${isFailure ? 'shutdownTag-warn' : 'shutdownTag-ok'}`}>
-      {formatShutdownLabel(phase, reason)}
+    <span className={`shutdownTag ${reason === 'graceful' ? 'shutdownTag-ok' : 'shutdownTag-warn'}`}>
+      Phase {phase}: {label}
     </span>
   );
 }
 
 function ShutdownFooter({ phase1_metrics, phase2_metrics }) {
-  const p1Reason = phase1_metrics?.shutdown_reason;
-  const p2Reason = phase2_metrics?.shutdown_reason;
-  if (!p1Reason && !p2Reason) return null;
-
+  const p1 = phase1_metrics?.shutdown_reason;
+  const p2 = phase2_metrics?.shutdown_reason;
+  if (!p1 && !p2) return null;
   return (
     <div className="shutdownTags">
-      {p1Reason ? <ShutdownTag phase={1} reason={p1Reason} /> : null}
-      {p2Reason ? <ShutdownTag phase={2} reason={p2Reason} /> : null}
+      {p1 ? <ShutdownTag phase={1} reason={p1} /> : null}
+      {p2 ? <ShutdownTag phase={2} reason={p2} /> : null}
     </div>
   );
 }
@@ -203,22 +182,20 @@ function LeaderboardCard({ entry, rank }) {
         <div className="cardIdentity">
           <span className="cardRank">#{rank}</span>
           <span className="cardTeam">{entry.team}</span>
-          <code className="jobId" title={entry.best_job_id}>{shortJobId(entry.best_job_id)}</code>
+          <code className="jobId">{shortJobId(entry.best_job_id)}</code>
         </div>
-        <div className="cardScoreBlock">
-          <span className="cardScore">{fmtValue(entry.score_metrics.final_score)}</span>
-          {entry.best_score_at ? (
-            <span className="jobTime">{prettyTime(entry.best_score_at)}</span>
-          ) : null}
-        </div>
+        <span className="cardScore">{fmtValue(entry.score_metrics?.final_score)}</span>
       </div>
-
       <div className="metricStack">
-        <MetricBlock title="Phase 1" stats={pickStats(entry.phase1_metrics, PHASE1_KEYS, { accent: ['trade_tps'] })} />
-        <MetricBlock title="Phase 2" stats={pickStats(entry.phase2_metrics, PHASE2_KEYS, { accent: ['trade_tps'] })} />
-        <MetricBlock title="Score" stats={pickStats(entry.score_metrics, SCORE_KEYS, { accent: ['final_score'] })} />
+        <MetricBlock
+          title="Phase 1"
+          stats={pickStats(entry.phase1_metrics, PHASE1_KEYS, { accent: ['max_ops'] })}
+        />
+        <MetricBlock
+          title="Phase 2"
+          stats={pickStats(entry.phase2_metrics, PHASE2_KEYS, { accent: ['max_ops'] })}
+        />
       </div>
-
       <ShutdownFooter phase1_metrics={entry.phase1_metrics} phase2_metrics={entry.phase2_metrics} />
     </article>
   );
@@ -226,15 +203,26 @@ function LeaderboardCard({ entry, rank }) {
 
 function JobMetrics({ job }) {
   if (job.status === 'queued') return null;
-
   const phase1Pending = job.status === 'phase1_running' || job.status === 'compiling' ? 'running' : null;
-  const phase2Pending = job.status === 'phase2_running' ? 'running' : null;
+  const phase2Pending = (job.status || '').startsWith('phase2_running')
+    ? (job.status.includes('(')
+        ? job.status.substring(job.status.indexOf('(') + 1, job.status.indexOf(')'))
+        : 'running')
+    : null;
   const scoreStats = pickStats(job.score_metrics, SCORE_KEYS, { accent: ['final_score'] });
 
   return (
     <div className="metricStack">
-      <MetricBlock title="Phase 1" stats={pickStats(job.phase1_metrics, PHASE1_KEYS)} pending={phase1Pending} />
-      <MetricBlock title="Phase 2" stats={pickStats(job.phase2_metrics, PHASE2_KEYS)} pending={phase2Pending} />
+      <MetricBlock
+        title="Phase 1"
+        stats={pickStats(job.phase1_metrics, PHASE1_KEYS, { accent: ['max_ops'] })}
+        pending={phase1Pending}
+      />
+      <MetricBlock
+        title="Phase 2"
+        stats={pickStats(job.phase2_metrics, PHASE2_KEYS, { accent: ['max_ops'] })}
+        pending={phase2Pending}
+      />
       {scoreStats.length > 0 ? <MetricBlock title="Score" stats={scoreStats} /> : null}
     </div>
   );
@@ -242,15 +230,12 @@ function JobMetrics({ job }) {
 
 function Leaderboard() {
   const leaderboard = usePolling('/api/leaderboard');
-
   return (
     <div className="panel leaderboardPanel">
-      <div className="panelHeader">
-        <h2>Leaderboard</h2>
-      </div>
+      <div className="panelHeader"><h2>Leaderboard</h2></div>
       <div className="panelBody scrollPanel">
         {leaderboard.length === 0 ? (
-          <div className="emptyState">No submissions yet. Deploy an engine to begin.</div>
+          <div className="emptyState">No submissions yet.</div>
         ) : (
           <div className="leaderboardList">
             {leaderboard.map((entry, index) => (
@@ -265,7 +250,6 @@ function Leaderboard() {
 
 function Jobs() {
   const jobs = usePolling('/api/jobs');
-
   return (
     <div className="panel jobsPanel">
       <div className="panelHeader">
@@ -277,20 +261,18 @@ function Jobs() {
           <div className="emptyState">No jobs yet.</div>
         ) : (
           jobs.map((j) => (
-            <article key={j.job_id} className={`jobCard status-${j.status}`}>
+            <article key={j.job_id} className={`jobCard status-${(j.status || 'unknown').split(' ')[0]}`}>
               <div className="cardHeader">
                 <div className="cardIdentity">
                   <span className="cardTeam">{j.team}</span>
-                  <code className="jobId" title={j.job_id}>{shortJobId(j.job_id)}</code>
+                  <code className="jobId">{shortJobId(j.job_id)}</code>
                 </div>
                 <div className="cardMeta">
                   <StatusBadge status={j.status} />
                   <span className="jobTime">{prettyTime(j.created_at)}</span>
                 </div>
               </div>
-
               <JobMetrics job={j} />
-
               <div className="jobCardFooter">
                 <ShutdownFooter phase1_metrics={j.phase1_metrics} phase2_metrics={j.phase2_metrics} />
                 {j.created_at ? (
@@ -300,7 +282,6 @@ function Jobs() {
                   </span>
                 ) : null}
               </div>
-
               {j.error ? <div className="jobError">{j.error}</div> : null}
             </article>
           ))
@@ -313,20 +294,17 @@ function Jobs() {
 export default function App() {
   const [teamName, setTeamName] = useState('Team Alpha');
   const [file, setFile] = useState(null);
-  const [status, setStatus] = useState('Ready to submit');
+  const [status, setStatus] = useState('Ready');
 
   const handleUpload = async () => {
     if (!file) {
-      alert('Please select a .cpp file first!');
+      alert('Select a .cpp file first.');
       return;
     }
-
     setStatus('Uploading…');
-
     const formData = new FormData();
     formData.append('team_name', teamName);
     formData.append('code_file', file);
-
     try {
       const response = await fetch('/api/submit', { method: 'POST', body: formData });
       const data = await response.json();
@@ -340,48 +318,24 @@ export default function App() {
     <div className="app">
       <header className="appHeader">
         <h1 className="title">Trading Arena</h1>
-        <p className="subtitle">Submit your matching engine · survive the bot swarm · climb the leaderboard</p>
+        <p className="subtitle">Correctness first · then benchmark for max ops</p>
       </header>
-
       <div className="topGrid">
         <section className="deployPanel panel">
           <h2 className="sectionTitle">Deploy Engine</h2>
-
           <label className="field">
-            <span className="fieldLabel">Team name</span>
-            <input
-              type="text"
-              value={teamName}
-              onChange={(e) => setTeamName(e.target.value)}
-              className="input"
-              placeholder="Your team"
-            />
+            <span className="fieldLabel">Team</span>
+            <input type="text" value={teamName} onChange={(e) => setTeamName(e.target.value)} className="input" />
           </label>
-
           <label className="field">
             <span className="fieldLabel">C++ source</span>
-            <input
-              type="file"
-              accept=".cpp"
-              onChange={(e) => setFile(e.target.files[0] || null)}
-              className="input fileInput"
-            />
-            {file ? <span className="fileName">{file.name}</span> : null}
+            <input type="file" accept=".cpp" onChange={(e) => setFile(e.target.files[0] || null)} className="input fileInput" />
           </label>
-
-          <button type="button" onClick={handleUpload} className="submitBtn">
-            Submit engine
-          </button>
-
-          <div className="statusLine">
-            <span className={`statusDot ${status.startsWith('Queued') ? 'live' : ''}`} />
-            <span>{status}</span>
-          </div>
+          <button type="button" onClick={handleUpload} className="submitBtn">Submit</button>
+          <div className="statusLine"><span className={`statusDot ${status.startsWith('Queued') ? 'live' : ''}`} /><span>{status}</span></div>
         </section>
-
         <Leaderboard />
       </div>
-
       <Jobs />
     </div>
   );

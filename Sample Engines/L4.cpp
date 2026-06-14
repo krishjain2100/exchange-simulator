@@ -12,7 +12,7 @@
 namespace {
 
 constexpr uint32_t kNullNode = 0;
-constexpr size_t kPoolCapacity = 4'000'000;
+constexpr size_t kPoolCapacity = 8'000'000;
 
 struct BookNode {
   Order order{};
@@ -212,8 +212,10 @@ class OptimizedEngine : public ExchangeEngine {
           order_index_.erase(maker.sequence_id);
           UnlinkFromLevel(it->second, node, pool_);
           pool_.Free(node);
+          node = next;
+        } else if (taker.quantity == 0) {
+          break;
         }
-        node = next;
       }
 
       if (it->second.head == kNullNode)
@@ -251,8 +253,10 @@ class OptimizedEngine : public ExchangeEngine {
           order_index_.erase(maker.sequence_id);
           UnlinkFromLevel(it->second, node, pool_);
           pool_.Free(node);
+          node = next;
+        } else if (taker.quantity == 0) {
+          break;
         }
-        node = next;
       }
 
       if (it->second.head == kNullNode)
@@ -293,6 +297,18 @@ public:
     order_index_.clear();
     order_index_.reserve(2'000'000);
     seen_sequences_.clear();
+    seen_sequences_.reserve(2'000'000);
+  }
+
+  void Clear() override {
+    pool_.Init();
+    for (auto &book : books_) {
+      book.bids.clear();
+      book.asks.clear();
+    }
+    order_index_.clear();
+    seen_sequences_.clear();
+    order_index_.reserve(2'000'000);
     seen_sequences_.reserve(2'000'000);
   }
 

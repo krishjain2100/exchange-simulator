@@ -4,10 +4,10 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { pipeline } = require('stream/promises');
 const createLogger = require('../shared/logger');
 const { patchJob, trySetTeamBest } = require('../shared/redisStore');
-const { readPhase1Metrics,readPhase2Metrics,computeScore } = require('../shared/jobMetrics');
+const { readPhase1Metrics, computeScore } = require('../shared/jobMetrics');
 const { runChild } = require('./engine');
-const { runDockerSandbox } = require('./dockerSandbox');
-const { WORK_DIR, BENCHMARK_LOAD_PATH, BOT_REPLAY_BINARY, VERIFIER_BINARY, BUCKET_NAME } = require('./config');
+const { runSandbox } = require('./dockerSandbox');
+const { WORK_DIR, VERIFIER_BINARY, BUCKET_NAME } = require('./config');
 
 const log = createLogger('Worker');
 const s3 = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
@@ -27,10 +27,16 @@ async function runVerifier(jobDir) {
 async function runPhase1(workerClient, job_id, jobDir) {
     log.info(`[Worker] === Phase 1: Correctness Testing ===`);
     await patchJob(workerClient, job_id, { status: 'phase1_running' });
-    await runDockerSandbox({job_id, jobDir, workerClient, phase: 'correctness' });
+    await runSandbox({ job_id, jobDir, phase: 'correctness', workerClient });
     const phase1_metrics = readPhase1Metrics(jobDir);
     if (!phase1_metrics) throw new Error('Phase 1 metrics missing');
     await patchJob(workerClient, job_id, { phase1_metrics });
+
+    const reason = phase1_metrics.shutdown_reason;
+    if (reason === 'queue_overflow' || reason === 'sla_breach') {
+        throw new Error(`Phase 1 failed: (${reason}), could not keep up with correctness load`);
+    }
+
     log.info(`[Worker] Verifying Phase 1 correctness...`);
     await runVerifier(jobDir);
     log.info(`[Worker] Phase 1 correctness passed.`);
@@ -40,8 +46,7 @@ async function runPhase1(workerClient, job_id, jobDir) {
 async function runPhase2(workerClient, job_id, jobDir) {
     log.info(`[Worker] === Phase 2: Benchmark Scoring ===`);
     await patchJob(workerClient, job_id, { status: 'phase2_running' });
-    await runDockerSandbox({job_id, jobDir, workerClient, phase: 'benchmark' });
-    const phase2_metrics = readPhase2Metrics(jobDir);
+    const phase2_metrics = await runSandbox({ job_id, jobDir, phase: 'benchmark', workerClient });
     if (!phase2_metrics) throw new Error('Phase 2 metrics missing');
     await patchJob(workerClient, job_id, { phase2_metrics });
     log.info(`[Worker] Phase 2 benchmark passed.`);
@@ -49,7 +54,7 @@ async function runPhase2(workerClient, job_id, jobDir) {
 }
 
 async function finalizeSuccess(workerClient, job, phase1_metrics, phase2_metrics) {
-    const score_metrics = computeScore(phase1_metrics, phase2_metrics);
+    const score_metrics = computeScore(phase2_metrics);
 
     await patchJob(workerClient, job.job_id, {
         status: 'passed',
@@ -98,26 +103,17 @@ async function processJob(job, workerClient) {
     let phase1_metrics = null;
     let phase2_metrics = null;
 
+    fs.mkdirSync(jobDir, { recursive: true });
+
+    await patchJob(workerClient, job.job_id, {
+        status: 'compiling',
+        started_at: Date.now(),
+    }).catch((redisErr) => {
+        log.error(`[Worker] Failed to persist job status:`, redisErr.message);
+    });
+
     try {
-        if (!fs.existsSync(BENCHMARK_LOAD_PATH)) {
-            throw new Error(`Missing benchmark load file at ${BENCHMARK_LOAD_PATH}`);
-        }
-        if (!fs.existsSync(BOT_REPLAY_BINARY)) {
-            throw new Error(`Missing bot_replay binary at ${BOT_REPLAY_BINARY}`);
-        }
-        if (!fs.existsSync(VERIFIER_BINARY)) {
-            throw new Error(`Missing verifier binary at ${VERIFIER_BINARY}`);
-        }
-
-        fs.mkdirSync(jobDir, { recursive: true });
-
-        await patchJob(workerClient, job.job_id, {
-            status: 'compiling',
-            started_at: Date.now(),
-        });
-
         await downloadSubmission(job, sandboxCodePath);
-
         phase1_metrics = await runPhase1(workerClient, job.job_id, jobDir);
         phase2_metrics = await runPhase2(workerClient, job.job_id, jobDir);
         await finalizeSuccess(workerClient, job, phase1_metrics, phase2_metrics);
@@ -128,7 +124,8 @@ async function processJob(job, workerClient) {
             log.error(`[Worker] Failed to persist job error:`, redisErr.message);
         });
     } finally {
-        if (fs.existsSync(jobDir)) fs.rmSync(jobDir, { recursive: true, force: true });
+        // Keep jobDir for inspection on failure
+        // if (fs.existsSync(jobDir)) fs.rmSync(jobDir, { recursive: true, force: true });
     }
 }
 
