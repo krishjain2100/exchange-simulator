@@ -1,8 +1,7 @@
 const path = require('path');
 
 const BENCHMARK_BASELINE_OPS = 20000;
-const BENCHMARK_COARSE_LEVELS = ['10', '20', '30', '40', '50', '60', '80', '100', '120', '140', '160', '180', '200', '220', '240', '260', '280', '300'];
-const BENCHMARK_FINE_LEVELS = [];
+const BENCHMARK_COARSE_LEVELS = ['4', '8', '12', '16', '20', '24', '28', '32'];
 const BENCHMARK_LEVELS_DIR = path.join(__dirname, '../worker/levels');
 const BENCHMARK_LEVEL_SETTLE_MS = 6000;
 const BENCHMARK_LEVEL_MEASURE_MS = 4000;
@@ -30,7 +29,6 @@ function levelFilePath(mult) {
 module.exports = {
     BENCHMARK_BASELINE_OPS,
     BENCHMARK_COARSE_LEVELS,
-    BENCHMARK_FINE_LEVELS,
     BENCHMARK_LEVELS_DIR,
     BENCHMARK_LEVEL_SETTLE_MS,
     BENCHMARK_LEVEL_MEASURE_MS,

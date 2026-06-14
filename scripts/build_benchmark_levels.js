@@ -15,13 +15,8 @@ const GENERATE_BINARY = path.join(__dirname, 'generate_nasdaq_level');
 const ORDER_BYTES = 36;
 
 function eachBenchmarkMultiplier(fn) {
-    const lastCoarse = BENCHMARK_COARSE_LEVELS[BENCHMARK_COARSE_LEVELS.length - 1];
-    for (const coarse of BENCHMARK_COARSE_LEVELS) {
-        fn(coarse);
-        if (coarse === lastCoarse)
-            continue;
-        for (const suffix of BENCHMARK_FINE_LEVELS)
-            fn(`${coarse}${suffix}`);
+    for (let i = 1; i <= 32; i++) {
+        fn(String(i));
     }
 }
 

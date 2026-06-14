@@ -45,9 +45,9 @@ function runReplay(host, port, filePath, targetOps) {
     });
 }
 
-function evaluateProbe({ engineMetrics, replayError }) {
-    if (engineMetrics && engineMetrics.shutdown_reason === 'health_breach') {
-        return { failed: true, fail_reason: 'health_breach' };
+function evaluateProbe({ engineMetrics, replayError, breached, failReason }) {
+    if (breached || (engineMetrics && engineMetrics.shutdown_reason === 'health_breach')) {
+        return { failed: true, fail_reason: failReason || 'health_breach' };
     }
     if (replayError) {
         return { failed: true, fail_reason: 'replay_error' };
@@ -58,7 +58,7 @@ function evaluateProbe({ engineMetrics, replayError }) {
     return { failed: false, fail_reason: null };
 }
 
-async function executeBenchmarkProbe({ port, jobDir, multiplier, waitForNextProbe }) {
+async function executeBenchmarkProbe({ port, jobDir, multiplier, waitForNextProbe, dockerProcess }) {
     const key = String(multiplier);
     const filePath = levelFilePath(key);
     const target_ops = targetOpsForMultiplier(key);
@@ -75,38 +75,68 @@ async function executeBenchmarkProbe({ port, jobDir, multiplier, waitForNextProb
     await sleep(BENCHMARK_LEVEL_MEASURE_MS);
     await replayPromise;
 
+    const text = dockerProcess?._stdoutBuf?.text || '';
+    let breached = false;
+    let failReason = null;
+
+    if (text.includes('[Wrapper FATAL] Health Breach')) {
+        breached = true;
+        if (text.includes('queue_depth and latency exceeded')) {
+            failReason = 'health_breach_queue_depth_and_latency';
+        } else if (text.includes('queue_depth exceeded')) {
+            failReason = 'health_breach_queue_depth';
+        } else if (text.includes('latency exceeded')) {
+            failReason = 'health_breach_latency';
+        } else {
+            failReason = 'health_breach';
+        }
+    }
+
     const delivered = await sendPoisonPill(port);
     let engineMetrics = null;
 
     if (!delivered) {
-        await sleep(500);
-        const probeMetricsPath = path.join(jobDir, PHASE2_METRICS_FILE);
-        engineMetrics = fs.existsSync(probeMetricsPath)
-            ? parseEngineCsv(fs.readFileSync(probeMetricsPath, 'utf8'), true)
-            : null;
-
-        if (engineMetrics && engineMetrics.shutdown_reason === 'health_breach') {
+        if (breached) {
             log.info(`[Worker] Engine shut down due to health breach at ${multiplier}x. Poison pill delivery skipped.`);
         } else {
-            throw new Error('Poison pill could not be delivered');
+            await sleep(500);
+            const stillText = dockerProcess?._stdoutBuf?.text || '';
+            if (stillText.includes('[Wrapper FATAL] Health Breach')) {
+                breached = true;
+                if (stillText.includes('queue_depth and latency exceeded')) {
+                    failReason = 'health_breach_queue_depth_and_latency';
+                } else if (stillText.includes('queue_depth exceeded')) {
+                    failReason = 'health_breach_queue_depth';
+                } else if (stillText.includes('latency exceeded')) {
+                    failReason = 'health_breach_latency';
+                } else {
+                    failReason = 'health_breach';
+                }
+                log.info(`[Worker] Engine shut down due to health breach at ${multiplier}x. Poison pill delivery skipped.`);
+            } else {
+                throw new Error('Poison pill could not be delivered');
+            }
         }
     } else {
         if (waitForNextProbe) {
             await waitForNextProbe();
         }
-        const probeMetricsPath = path.join(jobDir, PHASE2_METRICS_FILE);
-        engineMetrics = fs.existsSync(probeMetricsPath)
-            ? parseEngineCsv(fs.readFileSync(probeMetricsPath, 'utf8'), true)
-            : null;
     }
 
-    if (replayError) {
+    const probeMetricsPath = path.join(jobDir, PHASE2_METRICS_FILE);
+    engineMetrics = fs.existsSync(probeMetricsPath)
+        ? parseEngineCsv(fs.readFileSync(probeMetricsPath, 'utf8'), true)
+        : null;
+
+    if (replayError && !breached) {
         log.warn(`[Worker] bot_replay error at ${multiplier}x: ${replayError.message}`);
     }
 
     const verdict = evaluateProbe({
         engineMetrics,
         replayError,
+        breached: breached || (dockerProcess?._stdoutBuf?.text.includes('[Wrapper FATAL] Health Breach')),
+        failReason,
     });
 
     const engineOps = engineMetrics ? engineMetrics.orders_processed : 0;

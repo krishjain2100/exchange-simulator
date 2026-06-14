@@ -3,19 +3,18 @@
 #include "NetworkServer.h"
 #include "RunContext.h"
 #include "Telemetry.h"
-#include "TelemetryChannel.h"
 #include <iostream>
 #include <thread>
 #include <unistd.h>
 
 int main() {
+  std::cout << std::unitbuf;
   ExchangeEngine *engine = CreateEngine();
   engine->Init();
 
   RunContext ctx;
 
   if (ctx.IsBenchmarkMode()) {
-    TelemetryChannel::InitFromEnvironment();
 
     // One process, many probes: poison pill ends a probe; Clear() + reset
     // between iterations prepares a clean book for the next bracket.

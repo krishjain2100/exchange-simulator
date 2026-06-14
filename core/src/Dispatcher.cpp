@@ -2,7 +2,6 @@
 #include "Artifacts.h"
 #include "Constants.h"
 #include "Telemetry.h"
-#include "TelemetryChannel.h"
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -85,9 +84,6 @@ void RunDispatcher(ExchangeEngine *engine, RunContext &ctx) {
 
   uint32_t check_counter = 0;
   uint32_t consecutive_breaches = 0;
-  uint64_t env_max_queue_depth = 0;
-  uint64_t env_max_process_time_ns = 0;
-  bool limits_loaded = false;
 
   while (true) {
     auto result = ctx.DequeueOrder();
@@ -121,30 +117,22 @@ void RunDispatcher(ExchangeEngine *engine, RunContext &ctx) {
 
     if (benchmark) {
       if (++check_counter % 1000 == 0) {
-        if (!limits_loaded) {
-          const char *q_env = std::getenv("HFT_MAX_QUEUE_DEPTH");
-          const char *t_env = std::getenv("HFT_MAX_PROCESS_TIME_NS");
-          if (q_env && *q_env) {
-            try { env_max_queue_depth = std::stoull(q_env); } catch (...) {}
-          }
-          if (t_env && *t_env) {
-            try { env_max_process_time_ns = std::stoull(t_env); } catch (...) {}
-          }
-          limits_loaded = true;
-        }
-
-        bool breached = false;
-        if (env_max_queue_depth > 0 && result.queue_depth > env_max_queue_depth) {
-          breached = true;
-        }
-        if (env_max_process_time_ns > 0 && duration > env_max_process_time_ns) {
-          breached = true;
-        }
+        const bool q_breached = (result.queue_depth > BENCHMARK_FAILURE_QUEUE_DEPTH);
+        const bool l_breached = (duration > BENCHMARK_FAILURE_PROCESS_TIME_NS);
+        const bool breached = q_breached || l_breached;
 
         if (breached) {
           if (++consecutive_breaches >= 3) {
-            std::cout << "\n[Wrapper FATAL] Health Breach! Queue depth: "
-                      << result.queue_depth << " | Latency: " << duration << " ns\n";
+            const char *reason = "unknown";
+            if (q_breached && l_breached) {
+              reason = "queue_depth and latency exceeded";
+            } else if (q_breached) {
+              reason = "queue_depth exceeded";
+            } else if (l_breached) {
+              reason = "latency exceeded";
+            }
+            std::cout << "\n[Wrapper FATAL] Health Breach (" << reason << ")! Queue depth: "
+                      << result.queue_depth << " | Latency: " << duration << " ns" << std::endl;
             shutdown_reason = "health_breach";
             ctx.SignalHealthBreach();
             break;

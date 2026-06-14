@@ -3,11 +3,11 @@ const { executeBenchmarkProbe } = require('./benchmarkProbe');
 const { patchJob } = require('../shared/redisStore');
 const {
     BENCHMARK_COARSE_LEVELS,
-    BENCHMARK_FINE_LEVELS,
     BENCHMARK_BORDERLINE_RETRIES,
 } = require('./config');
 
 const log = createLogger('Worker');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function formatProbeLog(prefix, result) {
     return (
@@ -18,7 +18,7 @@ function formatProbeLog(prefix, result) {
     );
 }
 
-async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listener, workerClient, job_id }) {
+async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listener, workerClient, job_id, dockerProcess }) {
     const search = {
         lastPass: null,
         firstFail: null,
@@ -30,10 +30,10 @@ async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listene
             if (workerClient && job_id) {
                 const suffix = retries > 1 ? ` - attempt ${attempt + 1}` : '';
                 await patchJob(workerClient, job_id, { status: `phase2_running (${multiplier}x${suffix})` })
-                    .catch((err) => log.error(`[Worker] Failed to update live multiplier status: ${err.message}`));
+                     .catch((err) => log.error(`[Worker] Failed to update live multiplier status: ${err.message}`));
             }
             const result = await executeBenchmarkProbe({
-                port, jobDir, multiplier, listener, waitForNextProbe,
+                port, jobDir, multiplier, listener, waitForNextProbe, dockerProcess,
             });
             if (!result.failed || attempt === retries - 1)
                 return result;
@@ -52,6 +52,11 @@ async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listene
 
         search.lastPass = mult;
         search.peakPassResult = result;
+
+        if (i < BENCHMARK_COARSE_LEVELS.length - 1) {
+            log.info(`[Worker] Sleeping 5s for CPU cooldown...`);
+            await sleep(5000);
+        }
     }
 
     if (search.lastPass == null) {
@@ -59,7 +64,15 @@ async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listene
     }
 
     if (search.firstFail != null && Number(search.firstFail) > Number(search.lastPass)) {
-        const fineLevels = BENCHMARK_FINE_LEVELS.map((s) => `${search.lastPass}${s}`);
+        const fineLevels = [];
+        const start = Number(search.lastPass);
+        const end = Number(search.firstFail);
+        for (let val = start + 1; val < end; val++) {
+            fineLevels.push(String(val));
+        }
+
+        log.info(`[Worker] Cooldown before starting fine levels search...`);
+        await sleep(5000);
 
         for (let i = 0; i < fineLevels.length; i++) {
             const mult = fineLevels[i];
@@ -70,6 +83,11 @@ async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listene
                 break;
 
             search.peakPassResult = result;
+
+            if (i < fineLevels.length - 1) {
+                log.info(`[Worker] Sleeping 5s for CPU cooldown...`);
+                await sleep(5000);
+            }
         }
     }
 

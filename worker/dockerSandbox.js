@@ -1,27 +1,18 @@
 const { spawn } = require('child_process');
 const getPort = require('get-port');
-const ip = require('ip');
 const createLogger = require('../shared/logger');
 const { waitForEngineReady, waitForNextProbe, attachStdoutBuffer } = require('./engine');
 const { startPhase1Load, stopLoadTimers } = require('./phaseLoad');
 const { searchBenchmarkBrackets } = require('./benchmarkSearch');
-const { TelemetryListener } = require('./telemetryListener');
 const {
     CORE_DIR,
     DOCKER_HARD_LIMIT_MS,
     DOCKER_MAX_MEMORY_MB,
     DOCKER_MAX_CPUS,
-    BENCHMARK_FAILURE_QUEUE_DEPTH,
-    BENCHMARK_FAILURE_PROCESS_TIME_NS,
-    BENCHMARK_FAILURE_DEBOUNCE,
     PHASE1_LOAD_FAILURE_MSG,
 } = require('./config');
 
 const log = createLogger('Worker');
-
-function telemetryHost() {
-    return process.env.HFT_TELEMETRY_HOST || ip.address();
-}
 
 function extractDockerFailureMessage(code, signal, dockerStderr, forcedReason) {
     if (forcedReason) return forcedReason;
@@ -123,6 +114,9 @@ async function runContainer({
                 await waitForEngineReady(dockerProcess, port);
                 await onReady(controls);
                 completed = true;
+                if (acceptCompletedAsSuccess) {
+                    settle(() => resolve());
+                }
             } catch (err) {
                 controls.forceStop();
                 settle(() => reject(err));
@@ -132,11 +126,14 @@ async function runContainer({
         dockerProcess.on('error', (err) => settle(() => reject(err)));
 
         dockerProcess.on('close', (code, signal) => {
-            settle(() => {
-                const ok = code === 0 || (acceptCompletedAsSuccess && completed);
-                if (ok) resolve();
-                else reject(new Error(extractDockerFailureMessage(code, signal, stderr, forcedReason)));
-            });
+            const ok = code === 0 || (acceptCompletedAsSuccess && completed);
+            if (ok) {
+                if (completed || !acceptCompletedAsSuccess) {
+                    settle(() => resolve());
+                }
+            } else {
+                settle(() => reject(new Error(extractDockerFailureMessage(code, signal, stderr, forcedReason))));
+            }
         });
     });
 }
@@ -158,6 +155,7 @@ async function driveBenchmark(controls, { workerClient, job_id, jobDir }) {
         port,
         workerClient,
         job_id,
+        dockerProcess: controls.dockerProcess,
         waitForNextProbe: () => waitForNextProbe(controls.dockerProcess, port),
     });
     controls.forceStop();
@@ -176,8 +174,6 @@ const PHASE_CONFIG = {
         acceptCompletedAsSuccess: true,
         env: () => ({
             HFT_RUN_MODE: 'benchmark',
-            HFT_MAX_QUEUE_DEPTH: BENCHMARK_FAILURE_QUEUE_DEPTH,
-            HFT_MAX_PROCESS_TIME_NS: BENCHMARK_FAILURE_PROCESS_TIME_NS,
         }),
         drive: driveBenchmark,
     },

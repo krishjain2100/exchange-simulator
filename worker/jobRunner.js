@@ -124,8 +124,7 @@ async function processJob(job, workerClient) {
             log.error(`[Worker] Failed to persist job error:`, redisErr.message);
         });
     } finally {
-        // Keep jobDir for inspection on failure
-        // if (fs.existsSync(jobDir)) fs.rmSync(jobDir, { recursive: true, force: true });
+        if (fs.existsSync(jobDir)) fs.rmSync(jobDir, { recursive: true, force: true });
     }
 }
 
