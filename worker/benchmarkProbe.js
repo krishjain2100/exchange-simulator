@@ -55,18 +55,22 @@ function evaluateProbe({ engineMetrics, replayError, breached, failReason }) {
     if (!engineMetrics) {
         return { failed: true, fail_reason: 'no_metrics' };
     }
+    if (engineMetrics.trades_executed === 0) {
+        return { failed: true, fail_reason: 'zero_trades' };
+    }
     return { failed: false, fail_reason: null };
 }
 
-async function executeBenchmarkProbe({ port, jobDir, multiplier, waitForNextProbe, dockerProcess }) {
+async function executeBenchmarkProbe({ port, host = process.env.ENGINE_HOST || '127.0.0.1', jobDir, multiplier, waitForNextProbe, dockerProcess }) {
     const key = String(multiplier);
     const filePath = levelFilePath(key);
     const target_ops = targetOpsForMultiplier(key);
+    const startLen = dockerProcess?._stdoutBuf?.text?.length || 0;
 
     let replayError = null;
 
     const replayPromise = runReplay(
-        '127.0.0.1', port, filePath, target_ops,
+        host, port, filePath, target_ops,
     ).catch((err) => {
         replayError = err;
     });
@@ -76,50 +80,58 @@ async function executeBenchmarkProbe({ port, jobDir, multiplier, waitForNextProb
     await replayPromise;
 
     const text = dockerProcess?._stdoutBuf?.text || '';
+    const newText = text.slice(startLen);
     let breached = false;
     let failReason = null;
 
-    if (text.includes('[Wrapper FATAL] Health Breach')) {
+    if (newText.includes('[Wrapper FATAL] Health Breach')) {
         breached = true;
-        if (text.includes('queue_depth and latency exceeded')) {
+        if (newText.includes('queue_depth and latency exceeded')) {
             failReason = 'health_breach_queue_depth_and_latency';
-        } else if (text.includes('queue_depth exceeded')) {
+        } else if (newText.includes('queue_depth exceeded')) {
             failReason = 'health_breach_queue_depth';
-        } else if (text.includes('latency exceeded')) {
+        } else if (newText.includes('latency exceeded')) {
             failReason = 'health_breach_latency';
         } else {
             failReason = 'health_breach';
         }
     }
 
-    const delivered = await sendPoisonPill(port);
+    const delivered = await sendPoisonPill(port, host);
     let engineMetrics = null;
 
     if (!delivered) {
         if (breached) {
             log.info(`[Worker] Engine shut down due to health breach at ${multiplier}x. Poison pill delivery skipped.`);
+            if (waitForNextProbe) {
+                await waitForNextProbe(startLen);
+            }
         } else {
             await sleep(500);
             const stillText = dockerProcess?._stdoutBuf?.text || '';
-            if (stillText.includes('[Wrapper FATAL] Health Breach')) {
+            const newStillText = stillText.slice(startLen);
+            if (newStillText.includes('[Wrapper FATAL] Health Breach')) {
                 breached = true;
-                if (stillText.includes('queue_depth and latency exceeded')) {
+                if (newStillText.includes('queue_depth and latency exceeded')) {
                     failReason = 'health_breach_queue_depth_and_latency';
-                } else if (stillText.includes('queue_depth exceeded')) {
+                } else if (newStillText.includes('queue_depth exceeded')) {
                     failReason = 'health_breach_queue_depth';
-                } else if (stillText.includes('latency exceeded')) {
+                } else if (newStillText.includes('latency exceeded')) {
                     failReason = 'health_breach_latency';
                 } else {
                     failReason = 'health_breach';
                 }
                 log.info(`[Worker] Engine shut down due to health breach at ${multiplier}x. Poison pill delivery skipped.`);
+                if (waitForNextProbe) {
+                    await waitForNextProbe(startLen);
+                }
             } else {
                 throw new Error('Poison pill could not be delivered');
             }
         }
     } else {
         if (waitForNextProbe) {
-            await waitForNextProbe();
+            await waitForNextProbe(startLen);
         }
     }
 
@@ -135,7 +147,7 @@ async function executeBenchmarkProbe({ port, jobDir, multiplier, waitForNextProb
     const verdict = evaluateProbe({
         engineMetrics,
         replayError,
-        breached: breached || (dockerProcess?._stdoutBuf?.text.includes('[Wrapper FATAL] Health Breach')),
+        breached: breached || (dockerProcess?._stdoutBuf?.text.slice(startLen).includes('[Wrapper FATAL] Health Breach')),
         failReason,
     });
 

@@ -1,4 +1,16 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function getContainerIP(containerName) {
+    try {
+        const ip = execSync(`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${containerName}`)
+            .toString()
+            .trim();
+        return ip;
+    } catch (err) {
+        return null;
+    }
+}
 const getPort = require('get-port');
 const createLogger = require('../shared/logger');
 const { waitForEngineReady, waitForNextProbe, attachStdoutBuffer } = require('./engine');
@@ -42,17 +54,32 @@ function forceStopContainer(containerName, dockerProcess) {
         dockerProcess.kill('SIGKILL');
 }
 
+function translateToHostPath(containerPath) {
+    const hostProjectPath = process.env.HOST_PROJECT_PATH;
+    if (!hostProjectPath) return containerPath;
+    if (containerPath.startsWith('/workspace')) {
+        return containerPath.replace('/workspace', hostProjectPath);
+    }
+    return containerPath;
+}
+
 function buildDockerArgs({ containerName, port, jobDir, env }) {
     const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-    return [
+    const hostJobDir = translateToHostPath(jobDir);
+    const hostCoreDir = translateToHostPath(CORE_DIR);
+    const args = [
         'run', '--rm', '--name', containerName,
         '-p', `${port}:8080`,
         `--cpus=${DOCKER_MAX_CPUS}`, `--memory=${DOCKER_MAX_MEMORY_MB}m`,
         ...envArgs,
-        '-v', `${jobDir}:/sandbox`,
-        '-v', `${CORE_DIR}:/core:ro`,
-        'hft-sandbox',
+        '-v', `${hostJobDir}:/sandbox`,
+        '-v', `${hostCoreDir}:/core:ro`,
     ];
+    if (process.env.DOCKER_NET) {
+        args.push('--network', process.env.DOCKER_NET);
+    }
+    args.push('hft-sandbox');
+    return args;
 }
 
 async function runContainer({
@@ -79,8 +106,12 @@ async function runContainer({
         let loadCleanup = null;
         let completed = false;
 
+        let targetHost = '127.0.0.1';
+        let targetPort = port;
+
         const controls = {
-            port,
+            port: targetPort,
+            host: targetHost,
             dockerProcess,
             setForcedReason: (reason) => { forcedReason = reason; },
             onCleanup: (fn) => { loadCleanup = fn; },
@@ -111,7 +142,21 @@ async function runContainer({
 
         (async () => {
             try {
-                await waitForEngineReady(dockerProcess, port);
+                if (process.env.DOCKER_NET) {
+                    let ip = null;
+                    for (let i = 0; i < 50; i++) {
+                        ip = getContainerIP(containerName);
+                        if (ip) break;
+                        await sleep(100);
+                    }
+                    if (!ip) throw new Error(`Failed to resolve container IP for ${containerName}`);
+                    targetHost = ip;
+                    targetPort = 8080;
+                    controls.host = ip;
+                    controls.port = 8080;
+                }
+
+                await waitForEngineReady(dockerProcess, targetPort, { host: targetHost });
                 await onReady(controls);
                 completed = true;
                 if (acceptCompletedAsSuccess) {
@@ -140,6 +185,7 @@ async function runContainer({
 
 async function driveCorrectness(controls, { workerClient, job_id }) {
     const timers = await startPhase1Load(workerClient, job_id, controls.port, {
+        host: controls.host,
         onForceStop: () => {
             controls.setForcedReason(PHASE1_LOAD_FAILURE_MSG);
             controls.forceStop();
@@ -149,14 +195,15 @@ async function driveCorrectness(controls, { workerClient, job_id }) {
 }
 
 async function driveBenchmark(controls, { workerClient, job_id, jobDir }) {
-    const { port } = controls;
+    const { port, host } = controls;
     const peakPassResult = await searchBenchmarkBrackets({
         jobDir,
         port,
+        host,
         workerClient,
         job_id,
         dockerProcess: controls.dockerProcess,
-        waitForNextProbe: () => waitForNextProbe(controls.dockerProcess, port),
+        waitForNextProbe: (fromIndex) => waitForNextProbe(controls.dockerProcess, port, host, fromIndex),
     });
     controls.forceStop();
     return peakPassResult;

@@ -6,10 +6,9 @@ const POLL_MS = 3000;
 const FIELD_LABELS = {
   orders_processed: 'Orders',
   trades_executed: 'Trades',
-  max_ops: 'Max ops/s',
+  max_ops: 'Max ops',
   processing_duration_ns: 'Processing time',
   peak_multiplier: 'Peak level',
-  peak_target_ops: 'Target ops/s',
   p50: 'p50',
   p90: 'p90',
   p99: 'p99',
@@ -18,7 +17,7 @@ const FIELD_LABELS = {
 };
 
 const PHASE1_KEYS = ['orders_processed', 'trades_executed', 'max_ops', 'processing_duration_ns'];
-const PHASE2_KEYS = ['peak_multiplier', 'max_ops', 'peak_target_ops', 'p50', 'p90', 'p99'];
+const PHASE2_KEYS = ['peak_multiplier', 'max_ops', 'p50', 'p90', 'p99'];
 const SCORE_KEYS = ['final_score', 'max_ops', 'p99_penalty'];
 
 function shortJobId(id) {
@@ -71,8 +70,8 @@ function formatField(key, value) {
   if (key === 'p99_penalty') return fmtValue(value, { decimals: 3 });
   if (key === 'peak_multiplier') return `${fmtValue(value)}×`;
   if (key === 'processing_duration_ns') return formatDurationFromNs(value);
-  if (key === 'max_ops' || key === 'peak_target_ops') {
-    return `${fmtValue(value)} ops/s`;
+  if (key === 'max_ops') {
+    return `${fmtValue(value)} ops`;
   }
   if (key === 'p50' || key === 'p90' || key === 'p99') {
     return `${fmtValue(value)} ns`;
@@ -118,20 +117,36 @@ function usePolling(url) {
 
 function MetricBlock({ title, stats, pending }) {
   if (!stats.length && !pending) return null;
+  const latencyKeys = ['p50', 'p90', 'p99'];
+  const latencyStats = stats.filter((s) => latencyKeys.includes(s.key));
+  const normalStats = stats.filter((s) => !latencyKeys.includes(s.key));
+
   return (
     <div className="metricBlock">
       <div className="metricBlockTitle">
         {title}
         {pending ? <span className="metricPending">{pending}</span> : null}
       </div>
-      <div className="metricGrid">
-        {stats.map(({ key, label, value, accent }) => (
-          <div key={key} className="metricCell">
-            <span className="metricLabel">{label}</span>
-            <span className={`metricValue ${accent ? 'accent' : ''}`}>{value}</span>
-          </div>
-        ))}
-      </div>
+      {normalStats.length > 0 && (
+        <div className="metricGrid">
+          {normalStats.map(({ key, label, value, accent }) => (
+            <div key={key} className="metricCell">
+              <span className="metricLabel">{label}</span>
+              <span className={`metricValue ${accent ? 'accent' : ''}`}>{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {latencyStats.length > 0 && (
+        <div className="metricGrid latencyRow" style={{ marginTop: normalStats.length > 0 ? '6px' : '0' }}>
+          {latencyStats.map(({ key, label, value, accent }) => (
+            <div key={key} className="metricCell">
+              <span className="metricLabel">{label}</span>
+              <span className={`metricValue ${accent ? 'accent' : ''}`}>{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -150,6 +165,10 @@ const SHUTDOWN_LABELS = {
   graceful: 'Graceful exit',
   queue_overflow: 'Queue overflow',
   sla_breach: 'SLA breach',
+  health_breach: 'Health breach',
+  health_breach_queue_depth: 'Health breach: queue depth',
+  health_breach_latency: 'Health breach: latency',
+  health_breach_queue_depth_and_latency: 'Health breach: queue depth & latency',
 };
 
 function ShutdownTag({ phase, reason }) {
@@ -318,7 +337,7 @@ export default function App() {
     <div className="app">
       <header className="appHeader">
         <h1 className="title">Trading Arena</h1>
-        <p className="subtitle">Correctness first · then benchmark for max ops</p>
+        <p className="subtitle">Phase 1: Correctness · Phase 2 : Benchmark (Max Throughput)</p>
       </header>
       <div className="topGrid">
         <section className="deployPanel panel">

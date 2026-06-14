@@ -289,6 +289,10 @@
   gap: 6px;
 }
 
+.metricGrid.latencyRow {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .metricCell {
   display: flex;
   flex-direction: column;

@@ -4,7 +4,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const { connectRedisWithRetry } = require('../shared/redisStore');
 
-const BOT_FLEET = path.join(__dirname, 'bot_fleet');
+const BOT_FLEET = process.env.BOT_FLEET_BINARY || path.join(__dirname, 'bot_fleet');
 
 function runBotFleet(ticket) {
     return new Promise((resolve, reject) => {

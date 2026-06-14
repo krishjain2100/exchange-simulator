@@ -18,7 +18,7 @@ function formatProbeLog(prefix, result) {
     );
 }
 
-async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listener, workerClient, job_id, dockerProcess }) {
+async function searchBenchmarkBrackets({ jobDir, port, host, waitForNextProbe, listener, workerClient, job_id, dockerProcess }) {
     const search = {
         lastPass: null,
         firstFail: null,
@@ -27,13 +27,14 @@ async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listene
 
     const runProbe = async (multiplier, { retries = 1 } = {}) => {
         for (let attempt = 0; attempt < retries; attempt++) {
+
             if (workerClient && job_id) {
                 const suffix = retries > 1 ? ` - attempt ${attempt + 1}` : '';
                 await patchJob(workerClient, job_id, { status: `phase2_running (${multiplier}x${suffix})` })
                      .catch((err) => log.error(`[Worker] Failed to update live multiplier status: ${err.message}`));
             }
             const result = await executeBenchmarkProbe({
-                port, jobDir, multiplier, listener, waitForNextProbe, dockerProcess,
+                port, host, jobDir, multiplier, listener, waitForNextProbe, dockerProcess,
             });
             if (!result.failed || attempt === retries - 1)
                 return result;
@@ -42,21 +43,19 @@ async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listene
 
     for (let i = 0; i < BENCHMARK_COARSE_LEVELS.length; i++) {
         const mult = BENCHMARK_COARSE_LEVELS[i];
-        const result = await runProbe(mult);
+        const result = await runProbe(mult, { retries: BENCHMARK_BORDERLINE_RETRIES });
         log.info(formatProbeLog('Coarse', result));
 
         if (result.failed) {
             search.firstFail = mult;
+            search.firstFailReason = result.fail_reason;
             break;
         }
 
         search.lastPass = mult;
         search.peakPassResult = result;
 
-        if (i < BENCHMARK_COARSE_LEVELS.length - 1) {
-            log.info(`[Worker] Sleeping 5s for CPU cooldown...`);
-            await sleep(5000);
-        }
+
     }
 
     if (search.lastPass == null) {
@@ -71,26 +70,27 @@ async function searchBenchmarkBrackets({ jobDir, port, waitForNextProbe, listene
             fineLevels.push(String(val));
         }
 
-        log.info(`[Worker] Cooldown before starting fine levels search...`);
-        await sleep(5000);
+
 
         for (let i = 0; i < fineLevels.length; i++) {
             const mult = fineLevels[i];
             const result = await runProbe(mult, { retries: BENCHMARK_BORDERLINE_RETRIES });
             log.info(formatProbeLog('Fine', result));
 
-            if (result.failed)
+            if (result.failed) {
+                search.firstFailReason = result.fail_reason;
                 break;
+            }
 
             search.peakPassResult = result;
 
-            if (i < fineLevels.length - 1) {
-                log.info(`[Worker] Sleeping 5s for CPU cooldown...`);
-                await sleep(5000);
-            }
+
         }
     }
 
+    if (search.peakPassResult && search.firstFailReason) {
+        search.peakPassResult.shutdown_reason = search.firstFailReason;
+    }
     return search.peakPassResult;
 }
 

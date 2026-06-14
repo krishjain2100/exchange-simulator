@@ -12,7 +12,7 @@ const {
 } = require('../shared/benchmarkConfig');
 
 const GENERATE_BINARY = path.join(__dirname, 'generate_nasdaq_level');
-const ORDER_BYTES = 36;
+const ORDER_BYTES = 32;
 
 function eachBenchmarkMultiplier(fn) {
     for (let i = 1; i <= 32; i++) {

@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    container_name: hft-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - hft-network
+
+  gateway-backend:
+    image: node:20-bullseye
+    container_name: hft-gateway-backend
+    working_dir: /workspace/gateway/backend
+    volumes:
+      - .:/workspace
+    ports:
+      - "3000:3000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-my-hackathon-submissions}
+    command: sh -c "npm install && node server.js"
+    depends_on:
+      - redis
+    networks:
+      - hft-network
+
+  bot-orchestrator:
+    image: node:20-bullseye
+    container_name: hft-bot-orchestrator
+    working_dir: /workspace/bot_node
+    volumes:
+      - .:/workspace
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - BOT_FLEET_BINARY=/usr/local/bin/bot_fleet
+    command: sh -c "npm install && g++ -std=c++17 -O2 -pthread -I/workspace/core/include bot_fleet.cpp -o /usr/local/bin/bot_fleet && node bot_worker.js"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+    networks:
+      - hft-network
+
+  sandbox-worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    volumes:
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-my-hackathon-submissions}
+      - HOST_PROJECT_PATH=${HOST_PROJECT_PATH:-/Users/krishjain/Desktop/hackathon-platform}
+      - WORK_DIR=/workspace/run_env
+      - CORE_DIR=/workspace/core
+      - DOCKER_NET=hft-network
+      - BOT_REPLAY_BINARY=/usr/local/bin/bot_replay
+      - VERIFIER_BINARY=/usr/local/bin/verifier
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+    networks:
+      - hft-network
+
+  gateway-frontend:
+    image: node:20-bullseye
+    container_name: hft-gateway-frontend
+    working_dir: /workspace/gateway/frontend
+    volumes:
+      - .:/workspace
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://gateway-backend:3000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - gateway-backend
+    networks:
+      - hft-network
+
+networks:
+  hft-network:
+    name: hft-network
+    driver: bridge

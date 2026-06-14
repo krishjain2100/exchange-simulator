@@ -81,7 +81,6 @@ static Order MakeOrder(uint64_t seq, uint32_t client, uint16_t instr,
                        Side side) {
   Order order{};
   order.sequence_id = seq;
-  order.timestamp_ns = 0;
   order.client_id = client;
   order.instrument_id = instr;
   order.type = type;

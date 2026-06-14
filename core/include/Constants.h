@@ -22,6 +22,5 @@ constexpr size_t PHASE1_MAX_QUEUE_DEPTH = 2'000'000;
 constexpr size_t BENCHMARK_LATENCY_CAP = 5'000'000;
 
 // Benchmark health failure thresholds checked by the dispatcher wrapper.
-constexpr size_t BENCHMARK_FAILURE_QUEUE_DEPTH = 100'000;
-constexpr uint64_t BENCHMARK_FAILURE_PROCESS_TIME_NS =
-    100'000; // 100 microseconds
+constexpr size_t BENCHMARK_FAILURE_QUEUE_DEPTH = 3'000;
+constexpr uint64_t BENCHMARK_FAILURE_PROCESS_TIME_NS = 5'000; // 5 microseconds

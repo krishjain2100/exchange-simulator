@@ -14,16 +14,16 @@ const log = createLogger('Worker');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function buildPoisonPillBuffer() {
-    const buf = Buffer.alloc(36);
-    buf.writeUInt8(9, 35);
+    const buf = Buffer.alloc(32);
+    buf.writeUInt8(9, 27);
     return buf;
 }
 
-function sendPoisonPill(port) {
+function sendPoisonPill(port, host = process.env.ENGINE_HOST || '127.0.0.1') {
     return new Promise((resolve) => {
         const client = new net.Socket();
         client.setTimeout(3000);
-        client.connect(port, '127.0.0.1', () => {
+        client.connect(port, host, () => {
             client.write(buildPoisonPillBuffer());
             client.end();
             resolve(true);
@@ -36,10 +36,10 @@ function sendPoisonPill(port) {
     });
 }
 
-function schedulePoisonPill(port, delayMs, reason) {
+function schedulePoisonPill(port, delayMs, reason, host = process.env.ENGINE_HOST || '127.0.0.1') {
     return setTimeout(async () => {
         log.info(reason);
-        const delivered = await sendPoisonPill(port);
+        const delivered = await sendPoisonPill(port, host);
         if (!delivered) {
             log.warn('[Worker] Poison pill could not be delivered (engine may already be shut down).');
         }
@@ -103,7 +103,7 @@ function waitForNewLogMarker(dockerProcess, marker, afterIndex, timeoutMs) {
     });
 }
 
-function canConnect(port) {
+function canConnect(port, host = process.env.ENGINE_HOST || '127.0.0.1') {
     return new Promise((resolve) => {
         const socket = new net.Socket();
         socket.setTimeout(500);
@@ -116,12 +116,12 @@ function canConnect(port) {
             resolve(false);
         });
         socket.once('error', () => resolve(false));
-        socket.connect(port, '127.0.0.1');
+        socket.connect(port, host);
     });
 }
 
 // Poll until the published Docker port accepts TCP — avoids stdout buffering races.
-async function waitForEngineReady(dockerProcess, port, { timeoutMs = ENGINE_READY_TIMEOUT_MS } = {}) {
+async function waitForEngineReady(dockerProcess, port, { timeoutMs = ENGINE_READY_TIMEOUT_MS, host = process.env.ENGINE_HOST || '127.0.0.1' } = {}) {
     if (dockerProcess) {
         const startLen = dockerProcess._stdoutBuf ? dockerProcess._stdoutBuf.text.length : 0;
         await waitForNewLogMarker(
@@ -136,7 +136,7 @@ async function waitForEngineReady(dockerProcess, port, { timeoutMs = ENGINE_READ
 
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-        if (await canConnect(port)) {
+        if (await canConnect(port, host)) {
             await sleep(ENGINE_READY_SETTLE_MS);
             return;
         }
@@ -146,16 +146,16 @@ async function waitForEngineReady(dockerProcess, port, { timeoutMs = ENGINE_READ
 }
 
 // After a poison pill, wait for probe metrics flush then the next listen cycle.
-async function waitForNextProbe(dockerProcess, port) {
+async function waitForNextProbe(dockerProcess, port, host = process.env.ENGINE_HOST || '127.0.0.1', fromIndex) {
     attachStdoutBuffer(dockerProcess);
-    const startLen = dockerProcess._stdoutBuf.text.length;
+    const startLen = fromIndex !== undefined ? fromIndex : dockerProcess._stdoutBuf.text.length;
     await waitForNewLogMarker(
         dockerProcess,
         PROBE_READY_LOG_MARKER,
         startLen,
         PROBE_READY_TIMEOUT_MS,
     );
-    await waitForEngineReady(dockerProcess, port);
+    await waitForEngineReady(dockerProcess, port, { host });
 }
 
 function runChild(binary, args, { onStdout, onStderrLine } = {}) {

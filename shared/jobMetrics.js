@@ -37,8 +37,8 @@ function readPhase2Metrics(jobDir) {
 function computeScore(phase2_metrics) {
     const maxOps = phase2_metrics.max_ops ?? 0;
     const p99 = phase2_metrics.p99 ?? 0;
-    // Penalize latency relative to a 1,000 ns (1 microsecond) target scale
-    const p99_penalty = 1 + (p99 / 1000);
+    // Logarithmic penalty: dampens tail latency jitter while still rewarding extremely low latency
+    const p99_penalty = 1 + Math.log(1 + p99 / 1000);
 
     return {
         final_score: Math.floor(maxOps / p99_penalty),

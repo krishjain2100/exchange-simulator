@@ -1,7 +1,7 @@
 #include "OrderParser.h"
 #include <cstring>
 
-static_assert(sizeof(Order) == 36, "Wire frame must stay 36 bytes");
+static_assert(sizeof(Order) == 32, "Wire frame must stay 32 bytes");
 
 namespace {
 

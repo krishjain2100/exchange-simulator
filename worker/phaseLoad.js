@@ -5,12 +5,12 @@ const { PHASE1_TIMEOUT_MS, PHASE1_FORCE_STOP_MS } = require('./config');
 
 const log = createLogger('Worker');
 
-async function startPhase1Load(workerClient, job_id, port, { onForceStop } = {}) {
-    log.info(`[Worker] Phase 1 (correctness) → ${ip.address()}:${port}`);
+async function startPhase1Load(workerClient, job_id, port, { host, onForceStop } = {}) {
+    log.info(`[Worker] Phase 1 (correctness) → ${host || ip.address()}:${port}`);
 
     await workerClient.lPush('hackathon:bot_queue', JSON.stringify({
         job_id,
-        target_ip: ip.address(),
+        target_ip: host || process.env.ENGINE_HOST || ip.address(),
         target_port: port,
     }));
 
@@ -18,6 +18,7 @@ async function startPhase1Load(workerClient, job_id, port, { onForceStop } = {})
         port,
         PHASE1_TIMEOUT_MS,
         `[Worker] Phase 1 poison pill (${PHASE1_TIMEOUT_MS / 1000}s)`,
+        host,
     );
 
     const forceStopNet = setTimeout(() => {

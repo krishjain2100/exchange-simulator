@@ -3,6 +3,8 @@ node_modules/
 gateway/
 bot_node/
 worker/node_modules/
+worker/levels/
+run_env/
 Sample Engines/
 .git/
 dump.rdb

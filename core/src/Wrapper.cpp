@@ -24,11 +24,6 @@ int main() {
       network_thread.join();
       dispatcher_thread.join();
 
-      if (ctx.IsHealthBreach()) {
-        std::cout << "[Wrapper] Health breach detected. Terminating process." << std::endl;
-        _exit(0);
-      }
-
       ctx.ResetForNextProbe();
       Telemetry::Reset();
       engine->Clear();
